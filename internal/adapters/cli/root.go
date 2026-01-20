@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/devbush/ig2insights/internal/adapters/cli/tui"
 	"github.com/devbush/ig2insights/internal/application"
@@ -86,10 +87,7 @@ func runInteractiveMenu() error {
 
 	switch selected {
 	case "transcribe":
-		fmt.Print("Enter reel URL or ID: ")
-		var input string
-		fmt.Scanln(&input)
-		return runTranscribe(input)
+		return runTranscribeInteractive()
 	case "account":
 		fmt.Print("Enter username: ")
 		var username string
@@ -101,6 +99,93 @@ func runInteractiveMenu() error {
 		fmt.Println("Settings not yet implemented")
 	case "":
 		fmt.Println("Cancelled")
+	}
+
+	return nil
+}
+
+func runTranscribeInteractive() error {
+	// Show output options
+	checkboxOpts := []tui.CheckboxOption{
+		{Label: "Transcript", Value: "transcript", Checked: true},
+		{Label: "Download video", Value: "video", Checked: false},
+		{Label: "Download thumbnail", Value: "thumbnail", Checked: false},
+	}
+
+	selected, err := tui.RunCheckbox("What would you like to get?", checkboxOpts)
+	if err != nil {
+		return err
+	}
+	if selected == nil {
+		fmt.Println("Cancelled")
+		return nil
+	}
+
+	// Parse selections
+	wantTranscript := false
+	wantVideo := false
+	wantThumbnail := false
+	for _, s := range selected {
+		switch s {
+		case "transcript":
+			wantTranscript = true
+		case "video":
+			wantVideo = true
+		case "thumbnail":
+			wantThumbnail = true
+		}
+	}
+
+	// Get reel URL
+	fmt.Print("Enter reel URL or ID: ")
+	var input string
+	fmt.Scanln(&input)
+
+	// Set flags based on selections
+	videoFlag = wantVideo
+	thumbnailFlag = wantThumbnail
+
+	if wantTranscript {
+		return runTranscribe(input)
+	}
+
+	// Download only (no transcription)
+	return runDownloadOnly(input, wantVideo, wantThumbnail)
+}
+
+func runDownloadOnly(input string, video, thumbnail bool) error {
+	app, err := GetApp()
+	if err != nil {
+		return fmt.Errorf("failed to initialize: %w", err)
+	}
+
+	reel, err := domain.ParseReelInput(input)
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+	outputDir := downloadDirFlag
+	if outputDir == "" {
+		outputDir = "."
+	}
+
+	if video {
+		destPath := filepath.Join(outputDir, reel.ID+".mp4")
+		fmt.Printf("Downloading video to %s...\n", destPath)
+		if err := app.Downloader.DownloadVideo(ctx, reel.ID, destPath); err != nil {
+			return fmt.Errorf("video download failed: %w", err)
+		}
+		fmt.Println("✓ Video downloaded")
+	}
+
+	if thumbnail {
+		destPath := filepath.Join(outputDir, reel.ID+".jpg")
+		fmt.Printf("Downloading thumbnail to %s...\n", destPath)
+		if err := app.Downloader.DownloadThumbnail(ctx, reel.ID, destPath); err != nil {
+			return fmt.Errorf("thumbnail download failed: %w", err)
+		}
+		fmt.Println("✓ Thumbnail downloaded")
 	}
 
 	return nil
