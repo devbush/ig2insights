@@ -1,9 +1,13 @@
 package cli
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 
+	"github.com/devbush/ig2insights/internal/application"
+	"github.com/devbush/ig2insights/internal/domain"
 	"github.com/spf13/cobra"
 )
 
@@ -65,8 +69,102 @@ func runInteractiveMenu() error {
 }
 
 func runTranscribe(input string) error {
-	// TODO: Implement transcription flow
-	fmt.Printf("Transcribing: %s\n", input)
+	app, err := GetApp()
+	if err != nil {
+		return fmt.Errorf("failed to initialize: %w", err)
+	}
+
+	// Parse input
+	reel, err := domain.ParseReelInput(input)
+	if err != nil {
+		return err
+	}
+
+	// Check dependencies
+	if !app.Downloader.IsAvailable() {
+		fmt.Println("yt-dlp not found. Installing...")
+		if err := app.Downloader.Install(context.Background(), printProgress); err != nil {
+			return fmt.Errorf("failed to install yt-dlp: %w", err)
+		}
+		fmt.Println("\n✓ yt-dlp installed")
+	}
+
+	model := modelFlag
+	if model == "" {
+		model = app.Config.Defaults.Model
+	}
+
+	if !app.Transcriber.IsModelDownloaded(model) {
+		fmt.Printf("Model '%s' not found. Downloading...\n", model)
+		if err := app.Transcriber.DownloadModel(context.Background(), model, printProgress); err != nil {
+			return fmt.Errorf("failed to download model: %w", err)
+		}
+		fmt.Println("\n✓ Model downloaded")
+	}
+
+	// Transcribe
+	if !quietFlag {
+		fmt.Printf("Transcribing %s...\n", reel.ID)
+	}
+
+	ctx := context.Background()
+	result, err := app.TranscribeSvc.Transcribe(ctx, reel.ID, application.TranscribeOptions{
+		Model:   model,
+		NoCache: noCacheFlag,
+	})
+	if err != nil {
+		return err
+	}
+
+	if result.FromCache && !quietFlag {
+		fmt.Println("(from cache)")
+	}
+
+	// Output
+	return outputResult(result)
+}
+
+func printProgress(downloaded, total int64) {
+	if quietFlag {
+		return
+	}
+	if total > 0 {
+		pct := float64(downloaded) / float64(total) * 100
+		fmt.Printf("\rDownloading... %.1f%%", pct)
+	}
+}
+
+func outputResult(result *application.TranscribeResult) error {
+	format := formatFlag
+	if format == "" {
+		format = "text"
+	}
+
+	var output string
+	switch format {
+	case "text":
+		output = result.Transcript.ToText()
+	case "srt":
+		output = result.Transcript.ToSRT()
+	case "json":
+		data := map[string]interface{}{
+			"reel":       result.Reel,
+			"transcript": result.Transcript,
+		}
+		jsonBytes, err := json.MarshalIndent(data, "", "  ")
+		if err != nil {
+			return err
+		}
+		output = string(jsonBytes)
+	default:
+		return fmt.Errorf("unknown format: %s", format)
+	}
+
+	if outputFlag != "" {
+		return os.WriteFile(outputFlag, []byte(output), 0644)
+	}
+
+	fmt.Println(output)
 	return nil
 }
 
