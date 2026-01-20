@@ -632,7 +632,13 @@ func (d *Downloader) DownloadThumbnail(ctx context.Context, reelID string, destP
 	if err := cmd.Run(); err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			stderr := string(exitErr.Stderr)
-			return fmt.Errorf("thumbnail download failed: %s", stderr)
+			if strings.Contains(stderr, "Private video") || strings.Contains(stderr, "Video unavailable") {
+				return domain.ErrReelNotFound
+			}
+			if strings.Contains(stderr, "rate") || strings.Contains(stderr, "429") {
+				return domain.ErrRateLimited
+			}
+			return fmt.Errorf("thumbnail download failed: %s", strings.TrimSpace(stderr))
 		}
 		return fmt.Errorf("thumbnail download failed: %w", err)
 	}
@@ -677,7 +683,10 @@ func (d *Downloader) DownloadVideo(ctx context.Context, reelID string, destPath 
 			if strings.Contains(stderr, "Private video") || strings.Contains(stderr, "Video unavailable") {
 				return domain.ErrReelNotFound
 			}
-			return fmt.Errorf("video download failed: %s", stderr)
+			if strings.Contains(stderr, "rate") || strings.Contains(stderr, "429") {
+				return domain.ErrRateLimited
+			}
+			return fmt.Errorf("video download failed: %s", strings.TrimSpace(stderr))
 		}
 		return fmt.Errorf("video download failed: %w", err)
 	}
