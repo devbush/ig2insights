@@ -16,7 +16,8 @@ type TranscribeOptions struct {
 	Format        string // text, srt, json
 	NoCache       bool
 	Language      string // empty defaults to "auto"
-	SaveVideo     bool
+	SaveAudio     bool   // Save WAV audio file
+	SaveVideo     bool   // Save MP4 video file
 	SaveThumbnail bool
 	OutputDir     string // directory for outputs
 }
@@ -25,11 +26,13 @@ type TranscribeOptions struct {
 type TranscribeResult struct {
 	Reel          *domain.Reel
 	Transcript    *domain.Transcript
-	VideoPath     string
+	AudioPath     string // WAV audio path
+	VideoPath     string // MP4 video path
 	ThumbnailPath string
 
 	// Per-asset cache status
 	TranscriptFromCache bool
+	AudioFromCache      bool
 	VideoFromCache      bool
 	ThumbnailFromCache  bool
 }
@@ -75,10 +78,12 @@ func (s *TranscribeService) Transcribe(ctx context.Context, reelID string, opts 
 	cacheDir := s.cache.GetCacheDir(reelID)
 
 	hasTranscript := cached != nil && cached.Transcript != nil
+	hasAudio := cached != nil && cached.AudioPath != "" && fileExists(cached.AudioPath)
 	hasVideo := cached != nil && cached.VideoPath != "" && fileExists(cached.VideoPath)
 	hasThumbnail := cached != nil && cached.ThumbnailPath != "" && fileExists(cached.ThumbnailPath)
 
 	needTranscript := !hasTranscript
+	needAudio := (opts.SaveAudio || needTranscript) && !hasAudio
 	needVideo := opts.SaveVideo && !hasVideo
 	needThumbnail := opts.SaveThumbnail && !hasThumbnail
 
@@ -88,17 +93,17 @@ func (s *TranscribeService) Transcribe(ctx context.Context, reelID string, opts 
 		reel = cached.Reel
 	}
 
-	// Download video if needed for transcription OR if user requested video
-	var videoPath string
-	if needTranscript || needVideo {
-		downloadResult, err := s.downloader.Download(ctx, reelID, cacheDir)
+	// Download audio if needed for transcription OR if user requested audio
+	var audioPath string
+	if needAudio {
+		downloadResult, err := s.downloader.DownloadAudio(ctx, reelID, cacheDir)
 		if err != nil {
 			return nil, err
 		}
-		videoPath = downloadResult.VideoPath
+		audioPath = downloadResult.AudioPath
 		reel = downloadResult.Reel
-	} else if hasVideo {
-		videoPath = cached.VideoPath
+	} else if hasAudio {
+		audioPath = cached.AudioPath
 	}
 
 	// Transcribe if needed
@@ -115,7 +120,7 @@ func (s *TranscribeService) Transcribe(ctx context.Context, reelID string, opts 
 		}
 
 		var err error
-		transcript, err = s.transcriber.Transcribe(ctx, videoPath, ports.TranscribeOpts{
+		transcript, err = s.transcriber.Transcribe(ctx, audioPath, ports.TranscribeOpts{
 			Model:    model,
 			Language: language,
 		})
@@ -124,6 +129,22 @@ func (s *TranscribeService) Transcribe(ctx context.Context, reelID string, opts 
 		}
 	} else {
 		transcript = cached.Transcript
+	}
+
+	// Download video if needed (separate from audio)
+	var videoPath string
+	if needVideo {
+		if err := os.MkdirAll(cacheDir, 0755); err != nil {
+			return nil, err
+		}
+		vidPath := filepath.Join(cacheDir, "video.mp4")
+		if err := s.downloader.DownloadVideo(ctx, reelID, vidPath); err != nil {
+			// Non-fatal - continue without video
+		} else {
+			videoPath = vidPath
+		}
+	} else if hasVideo {
+		videoPath = cached.VideoPath
 	}
 
 	// Download thumbnail if needed
@@ -144,6 +165,7 @@ func (s *TranscribeService) Transcribe(ctx context.Context, reelID string, opts 
 	cacheItem := &ports.CachedItem{
 		Reel:          reel,
 		Transcript:    transcript,
+		AudioPath:     audioPath,
 		VideoPath:     videoPath,
 		ThumbnailPath: thumbnailPath,
 		CreatedAt:     now,
@@ -160,9 +182,11 @@ func (s *TranscribeService) Transcribe(ctx context.Context, reelID string, opts 
 	// Build result
 	result.Reel = reel
 	result.Transcript = transcript
+	result.AudioPath = audioPath
 	result.VideoPath = videoPath
 	result.ThumbnailPath = thumbnailPath
 	result.TranscriptFromCache = hasTranscript
+	result.AudioFromCache = hasAudio && (opts.SaveAudio || needTranscript)
 	result.VideoFromCache = hasVideo && opts.SaveVideo
 	result.ThumbnailFromCache = hasThumbnail && opts.SaveThumbnail
 
