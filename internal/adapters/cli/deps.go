@@ -11,7 +11,7 @@ import (
 func NewDepsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "deps",
-		Short: "Manage dependencies (yt-dlp)",
+		Short: "Manage dependencies (yt-dlp, whisper.cpp)",
 	}
 
 	statusCmd := &cobra.Command{
@@ -49,9 +49,17 @@ func runDepsStatus(cmd *cobra.Command, args []string) error {
 	// yt-dlp
 	if app.Downloader.IsAvailable() {
 		path := app.Downloader.GetBinaryPath()
-		fmt.Printf("  yt-dlp:   installed (%s)\n", path)
+		fmt.Printf("  yt-dlp:        installed (%s)\n", path)
 	} else {
-		fmt.Println("  yt-dlp:   not found")
+		fmt.Println("  yt-dlp:        not found")
+	}
+
+	// Whisper binary
+	if app.Transcriber.IsAvailable() {
+		path := app.Transcriber.GetBinaryPath()
+		fmt.Printf("  whisper.cpp:   installed (%s)\n", path)
+	} else {
+		fmt.Println("  whisper.cpp:   not found")
 	}
 
 	// Whisper models
@@ -62,7 +70,7 @@ func runDepsStatus(cmd *cobra.Command, args []string) error {
 			downloaded++
 		}
 	}
-	fmt.Printf("  whisper:  %d/%d models downloaded\n", downloaded, len(models))
+	fmt.Printf("  whisper models: %d/%d downloaded\n", downloaded, len(models))
 	fmt.Println()
 
 	return nil
@@ -95,25 +103,35 @@ func runDepsInstall(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if app.Downloader.IsAvailable() {
-		fmt.Println("yt-dlp is already installed")
-		return nil
-	}
-
-	fmt.Println("Installing yt-dlp...")
-
 	ctx := context.Background()
-	err = app.Downloader.Install(ctx, func(downloaded, total int64) {
+	progress := func(downloaded, total int64) {
 		if total > 0 {
 			pct := float64(downloaded) / float64(total) * 100
 			fmt.Printf("\rProgress: %.1f%%", pct)
 		}
-	})
-
-	if err != nil {
-		return err
 	}
 
-	fmt.Println("\nyt-dlp installed")
+	// Install yt-dlp
+	if app.Downloader.IsAvailable() {
+		fmt.Println("yt-dlp is already installed")
+	} else {
+		fmt.Println("Installing yt-dlp...")
+		if err := app.Downloader.Install(ctx, progress); err != nil {
+			return fmt.Errorf("failed to install yt-dlp: %w", err)
+		}
+		fmt.Println("\nyt-dlp installed")
+	}
+
+	// Install whisper.cpp
+	if app.Transcriber.IsAvailable() {
+		fmt.Println("whisper.cpp is already installed")
+	} else {
+		fmt.Println("Installing whisper.cpp...")
+		if err := app.Transcriber.Install(ctx, progress); err != nil {
+			return fmt.Errorf("failed to install whisper.cpp: %w", err)
+		}
+		fmt.Println("\nwhisper.cpp installed")
+	}
+
 	return nil
 }
