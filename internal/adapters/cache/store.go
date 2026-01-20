@@ -24,11 +24,12 @@ func NewFileCache(baseDir string, ttl time.Duration) *FileCache {
 }
 
 type metaFile struct {
-	Reel       *domain.Reel       `json:"reel"`
-	Transcript *domain.Transcript `json:"transcript"`
-	VideoPath  string             `json:"video_path"`
-	CreatedAt  time.Time          `json:"created_at"`
-	ExpiresAt  time.Time          `json:"expires_at"`
+	Reel          *domain.Reel       `json:"reel"`
+	Transcript    *domain.Transcript `json:"transcript"`
+	VideoPath     string             `json:"video_path"`
+	ThumbnailPath string             `json:"thumbnail_path"`
+	CreatedAt     time.Time          `json:"created_at"`
+	ExpiresAt     time.Time          `json:"expires_at"`
 }
 
 func (c *FileCache) GetCacheDir(reelID string) string {
@@ -60,11 +61,12 @@ func (c *FileCache) Get(ctx context.Context, reelID string) (*ports.CachedItem, 
 	}
 
 	return &ports.CachedItem{
-		Reel:       meta.Reel,
-		Transcript: meta.Transcript,
-		VideoPath:  meta.VideoPath,
-		CreatedAt:  meta.CreatedAt,
-		ExpiresAt:  meta.ExpiresAt,
+		Reel:          meta.Reel,
+		Transcript:    meta.Transcript,
+		VideoPath:     meta.VideoPath,
+		ThumbnailPath: meta.ThumbnailPath,
+		CreatedAt:     meta.CreatedAt,
+		ExpiresAt:     meta.ExpiresAt,
 	}, nil
 }
 
@@ -75,11 +77,12 @@ func (c *FileCache) Set(ctx context.Context, reelID string, item *ports.CachedIt
 	}
 
 	meta := metaFile{
-		Reel:       item.Reel,
-		Transcript: item.Transcript,
-		VideoPath:  item.VideoPath,
-		CreatedAt:  item.CreatedAt,
-		ExpiresAt:  item.ExpiresAt,
+		Reel:          item.Reel,
+		Transcript:    item.Transcript,
+		VideoPath:     item.VideoPath,
+		ThumbnailPath: item.ThumbnailPath,
+		CreatedAt:     item.CreatedAt,
+		ExpiresAt:     item.ExpiresAt,
 	}
 
 	data, err := json.MarshalIndent(meta, "", "  ")

@@ -9,11 +9,12 @@ import (
 
 // CachedItem represents a cached reel with transcript
 type CachedItem struct {
-	Reel       *domain.Reel
-	Transcript *domain.Transcript
-	VideoPath  string
-	CreatedAt  time.Time
-	ExpiresAt  time.Time
+	Reel          *domain.Reel
+	Transcript    *domain.Transcript
+	VideoPath     string
+	ThumbnailPath string
+	CreatedAt     time.Time
+	ExpiresAt     time.Time
 }
 
 // CacheStore handles persistent caching of reels and transcripts
