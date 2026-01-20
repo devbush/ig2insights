@@ -159,7 +159,12 @@ func (d *Downloader) Install(ctx context.Context, progress func(downloaded, tota
 	downloadURL := d.getDownloadURL()
 	destPath := filepath.Join(binDir, binaryName())
 
-	resp, err := http.Get(downloadURL)
+	// Use context-aware HTTP request
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to download yt-dlp: %w", err)
 	}
@@ -173,13 +178,28 @@ func (d *Downloader) Install(ctx context.Context, progress func(downloaded, tota
 	if err != nil {
 		return err
 	}
-	defer out.Close()
+
+	// Track success to clean up partial downloads on failure
+	success := false
+	defer func() {
+		out.Close()
+		if !success {
+			os.Remove(destPath)
+		}
+	}()
 
 	total := resp.ContentLength
 	var downloaded int64
 
 	buf := make([]byte, 32*1024)
 	for {
+		// Check for context cancellation
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
 		n, err := resp.Body.Read(buf)
 		if n > 0 {
 			_, writeErr := out.Write(buf[:n])
@@ -206,6 +226,7 @@ func (d *Downloader) Install(ctx context.Context, progress func(downloaded, tota
 		}
 	}
 
+	success = true
 	d.binPath = destPath
 	return nil
 }
