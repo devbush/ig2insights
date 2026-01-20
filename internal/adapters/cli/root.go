@@ -112,7 +112,8 @@ func runTranscribeInteractive() error {
 	// Show output options
 	checkboxOpts := []tui.CheckboxOption{
 		{Label: "Transcript", Value: "transcript", Checked: true},
-		{Label: "Download video", Value: "video", Checked: false},
+		{Label: "Download audio (WAV)", Value: "audio", Checked: false},
+		{Label: "Download video (MP4)", Value: "video", Checked: false},
 		{Label: "Download thumbnail", Value: "thumbnail", Checked: false},
 	}
 
@@ -127,12 +128,15 @@ func runTranscribeInteractive() error {
 
 	// Parse selections
 	wantTranscript := false
+	wantAudio := false
 	wantVideo := false
 	wantThumbnail := false
 	for _, s := range selected {
 		switch s {
 		case "transcript":
 			wantTranscript = true
+		case "audio":
+			wantAudio = true
 		case "video":
 			wantVideo = true
 		case "thumbnail":
@@ -146,6 +150,7 @@ func runTranscribeInteractive() error {
 	fmt.Scanln(&input)
 
 	// Set flags based on selections
+	audioFlag = wantAudio
 	videoFlag = wantVideo
 	thumbnailFlag = wantThumbnail
 
@@ -154,10 +159,10 @@ func runTranscribeInteractive() error {
 	}
 
 	// Download only (no transcription)
-	return runDownloadOnly(input, wantVideo, wantThumbnail)
+	return runDownloadOnly(input, wantAudio, wantVideo, wantThumbnail)
 }
 
-func runDownloadOnly(input string, video, thumbnail bool) error {
+func runDownloadOnly(input string, audio, video, thumbnail bool) error {
 	app, err := GetApp()
 	if err != nil {
 		return fmt.Errorf("failed to initialize: %w", err)
@@ -185,12 +190,46 @@ func runDownloadOnly(input string, video, thumbnail bool) error {
 
 	// Check cache for existing assets
 	cached, _ := app.Cache.Get(ctx, reel.ID)
+	hasAudio := cached != nil && cached.AudioPath != "" && fileExists(cached.AudioPath)
 	hasVideo := cached != nil && cached.VideoPath != "" && fileExists(cached.VideoPath)
 	hasThumbnail := cached != nil && cached.ThumbnailPath != "" && fileExists(cached.ThumbnailPath)
 
 	cacheDir := app.Cache.GetCacheDir(reel.ID)
 	cacheUpdated := false
-	var cachedVideoPath, cachedThumbnailPath string
+	var cachedAudioPath, cachedVideoPath, cachedThumbnailPath string
+
+	if audio {
+		destPath := filepath.Join(outputDir, baseName+".wav")
+		if hasAudio {
+			if !quietFlag {
+				fmt.Printf("Copying audio from cache to %s...\n", destPath)
+			}
+			if err := copyFile(cached.AudioPath, destPath); err != nil {
+				return fmt.Errorf("failed to copy audio: %w", err)
+			}
+			cachedAudioPath = cached.AudioPath
+		} else {
+			if !quietFlag {
+				fmt.Printf("Downloading audio to %s...\n", destPath)
+			}
+			// Download to cache directory, then copy to output
+			if err := os.MkdirAll(cacheDir, 0755); err != nil {
+				return fmt.Errorf("failed to create cache dir: %w", err)
+			}
+			downloadResult, err := app.Downloader.DownloadAudio(ctx, reel.ID, cacheDir)
+			if err != nil {
+				return fmt.Errorf("audio download failed: %w", err)
+			}
+			if err := copyFile(downloadResult.AudioPath, destPath); err != nil {
+				return fmt.Errorf("failed to copy audio: %w", err)
+			}
+			cachedAudioPath = downloadResult.AudioPath
+			cacheUpdated = true
+		}
+		if !quietFlag {
+			fmt.Println("Audio downloaded")
+		}
+	}
 
 	if video {
 		destPath := filepath.Join(outputDir, baseName+".mp4")
@@ -221,7 +260,7 @@ func runDownloadOnly(input string, video, thumbnail bool) error {
 			cacheUpdated = true
 		}
 		if !quietFlag {
-			fmt.Println("✓ Video downloaded")
+			fmt.Println("Video downloaded")
 		}
 	}
 
@@ -254,7 +293,7 @@ func runDownloadOnly(input string, video, thumbnail bool) error {
 			cacheUpdated = true
 		}
 		if !quietFlag {
-			fmt.Println("✓ Thumbnail downloaded")
+			fmt.Println("Thumbnail downloaded")
 		}
 	}
 
@@ -267,6 +306,7 @@ func runDownloadOnly(input string, video, thumbnail bool) error {
 		}
 
 		cacheItem := &ports.CachedItem{
+			AudioPath:     cachedAudioPath,
 			VideoPath:     cachedVideoPath,
 			ThumbnailPath: cachedThumbnailPath,
 			CreatedAt:     now,
@@ -277,6 +317,9 @@ func runDownloadOnly(input string, video, thumbnail bool) error {
 		if cached != nil {
 			cacheItem.Reel = cached.Reel
 			cacheItem.Transcript = cached.Transcript
+			if cacheItem.AudioPath == "" {
+				cacheItem.AudioPath = cached.AudioPath
+			}
 			if cacheItem.VideoPath == "" {
 				cacheItem.VideoPath = cached.VideoPath
 			}
