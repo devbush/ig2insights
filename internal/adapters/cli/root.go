@@ -467,8 +467,11 @@ func processSelectedReels(ctx context.Context, app *App, reels []*domain.Reel, o
 			continue
 		}
 
-		// Copy outputs to current directory
-		outputDir := "."
+		// Copy outputs to specified directory (or current if not set)
+		outputDir := dirFlag
+		if outputDir == "" {
+			outputDir = "."
+		}
 		baseName := reel.ID
 
 		if opts.Transcript && result.Transcript != nil {

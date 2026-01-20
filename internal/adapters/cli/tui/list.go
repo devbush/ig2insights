@@ -92,7 +92,7 @@ func (m ReelListModel) View() string {
 			title = title[:37] + "..."
 		}
 
-		views := formatViews(reel.ViewCount)
+		views := FormatCount(reel.ViewCount)
 		line := fmt.Sprintf("%s %s %-42s %8s views", cursor, checkbox, title, views)
 		sb.WriteString(style.Render(line))
 		sb.WriteString("\n")
@@ -132,12 +132,3 @@ func RunReelList(reels []*domain.Reel) ([]*domain.Reel, error) {
 	return finalModel.(ReelListModel).SelectedReels(), nil
 }
 
-func formatViews(count int64) string {
-	if count >= 1000000 {
-		return fmt.Sprintf("%.1fM", float64(count)/1000000)
-	}
-	if count >= 1000 {
-		return fmt.Sprintf("%.1fK", float64(count)/1000)
-	}
-	return fmt.Sprintf("%d", count)
-}
