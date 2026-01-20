@@ -143,6 +143,19 @@ func runTranscribe(input string) error {
 		fmt.Println("\n✓ whisper.cpp installed")
 	}
 
+	// Check ffmpeg
+	if !app.Downloader.IsFFmpegAvailable() {
+		instructions := app.Downloader.FFmpegInstructions()
+		if instructions != "" {
+			return errors.New(instructions)
+		}
+		fmt.Println("ffmpeg not found. Installing...")
+		if err := app.Downloader.InstallFFmpeg(context.Background(), printProgress); err != nil {
+			return fmt.Errorf("failed to install ffmpeg: %w", err)
+		}
+		fmt.Println("\n✓ ffmpeg installed")
+	}
+
 	model := modelFlag
 	if model == "" {
 		model = app.Config.Defaults.Model
