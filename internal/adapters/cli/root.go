@@ -11,6 +11,7 @@ import (
 	"github.com/devbush/ig2insights/internal/adapters/cli/tui"
 	"github.com/devbush/ig2insights/internal/application"
 	"github.com/devbush/ig2insights/internal/domain"
+	"github.com/devbush/ig2insights/internal/ports"
 	"github.com/spf13/cobra"
 )
 
@@ -214,19 +215,51 @@ func runTranscribe(input string) error {
 		return err
 	}
 
-	// Build step list based on what we're doing
-	steps := []string{"Checking dependencies", "Downloading video", "Extracting audio", "Transcribing"}
+	ctx := context.Background()
+
+	// Pre-flight cache check to determine what's cached
+	var cached *ports.CachedItem
+	if !noCacheFlag {
+		cached, _ = app.Cache.Get(ctx, reel.ID)
+	}
+
+	hasTranscript := cached != nil && cached.Transcript != nil
+	hasVideo := cached != nil && cached.VideoPath != "" && fileExists(cached.VideoPath)
+	hasThumbnail := cached != nil && cached.ThumbnailPath != "" && fileExists(cached.ThumbnailPath)
+
+	// Build step list based on what we're doing and what's cached
+	steps := []string{}
+
+	steps = append(steps, "Checking dependencies")
+
+	if hasTranscript {
+		steps = append(steps, "Downloading video (cached)")
+		steps = append(steps, "Extracting audio (cached)")
+		steps = append(steps, "Transcribing (cached)")
+	} else {
+		steps = append(steps, "Downloading video")
+		steps = append(steps, "Extracting audio")
+		steps = append(steps, "Transcribing")
+	}
 
 	videoStepIdx := -1
 	thumbStepIdx := -1
 
 	if videoFlag {
 		videoStepIdx = len(steps)
-		steps = append(steps, "Saving video")
+		if hasVideo {
+			steps = append(steps, "Saving video (cached)")
+		} else {
+			steps = append(steps, "Saving video")
+		}
 	}
 	if thumbnailFlag {
 		thumbStepIdx = len(steps)
-		steps = append(steps, "Downloading thumbnail")
+		if hasThumbnail {
+			steps = append(steps, "Downloading thumbnail (cached)")
+		} else {
+			steps = append(steps, "Downloading thumbnail")
+		}
 	}
 
 	progress := tui.NewProgressDisplay(steps, quietFlag)
@@ -289,14 +322,21 @@ func runTranscribe(input string) error {
 	// Start spinner for indeterminate steps
 	spinnerDone := progress.StartSpinner()
 
-	// Step 2: Download video (starts at step index 1)
-	progress.StartStep(1)
+	// If transcript is cached, immediately complete those steps
+	if hasTranscript {
+		progress.CompleteStep(1) // Download (cached)
+		progress.CompleteStep(2) // Extract (cached)
+		progress.CompleteStep(3) // Transcribe (cached)
+	} else {
+		progress.StartStep(1)
+	}
 
-	ctx := context.Background()
 	result, err := app.TranscribeSvc.Transcribe(ctx, reel.ID, application.TranscribeOptions{
-		Model:    model,
-		NoCache:  noCacheFlag,
-		Language: languageFlag,
+		Model:         model,
+		NoCache:       noCacheFlag,
+		Language:      languageFlag,
+		SaveVideo:     videoFlag,
+		SaveThumbnail: thumbnailFlag,
 	})
 
 	if err != nil {
@@ -305,10 +345,12 @@ func runTranscribe(input string) error {
 		return err
 	}
 
-	// Mark transcription steps complete
-	progress.CompleteStep(1) // Download
-	progress.CompleteStep(2) // Extract
-	progress.CompleteStep(3) // Transcribe
+	// Mark transcription steps complete if not already
+	if !hasTranscript {
+		progress.CompleteStep(1) // Download
+		progress.CompleteStep(2) // Extract
+		progress.CompleteStep(3) // Transcribe
+	}
 
 	// Determine output directory
 	outputDir := downloadDirFlag
@@ -324,27 +366,50 @@ func runTranscribe(input string) error {
 
 	// Step: Save video (if requested)
 	if videoFlag && videoStepIdx >= 0 {
-		progress.StartStep(videoStepIdx)
-		videoPath := filepath.Join(outputDir, reel.ID+".mp4")
-		if err := app.Downloader.DownloadVideo(ctx, reel.ID, videoPath); err != nil {
-			progress.FailStep(videoStepIdx, err.Error())
-			// Non-fatal, continue
-		} else {
+		if result.VideoFromCache {
+			// Already marked as cached in step name, just complete it
 			progress.CompleteStep(videoStepIdx)
-			outputs["Video"] = videoPath
+		} else {
+			progress.StartStep(videoStepIdx)
+		}
+
+		videoPath := filepath.Join(outputDir, reel.ID+".mp4")
+		if result.VideoPath != "" {
+			if err := copyFile(result.VideoPath, videoPath); err != nil {
+				progress.FailStep(videoStepIdx, err.Error())
+			} else {
+				progress.CompleteStep(videoStepIdx)
+				outputs["Video"] = videoPath
+			}
+		} else {
+			progress.FailStep(videoStepIdx, "no video available")
 		}
 	}
 
 	// Step: Download thumbnail (if requested)
 	if thumbnailFlag && thumbStepIdx >= 0 {
-		progress.StartStep(thumbStepIdx)
-		thumbPath := filepath.Join(outputDir, reel.ID+".jpg")
-		if err := app.Downloader.DownloadThumbnail(ctx, reel.ID, thumbPath); err != nil {
-			progress.FailStep(thumbStepIdx, err.Error())
-			// Non-fatal, continue
-		} else {
+		if result.ThumbnailFromCache {
 			progress.CompleteStep(thumbStepIdx)
-			outputs["Thumbnail"] = thumbPath
+		} else {
+			progress.StartStep(thumbStepIdx)
+		}
+
+		thumbPath := filepath.Join(outputDir, reel.ID+".jpg")
+		if result.ThumbnailPath != "" {
+			if err := copyFile(result.ThumbnailPath, thumbPath); err != nil {
+				progress.FailStep(thumbStepIdx, err.Error())
+			} else {
+				progress.CompleteStep(thumbStepIdx)
+				outputs["Thumbnail"] = thumbPath
+			}
+		} else {
+			// Thumbnail wasn't cached, try downloading directly
+			if err := app.Downloader.DownloadThumbnail(ctx, reel.ID, thumbPath); err != nil {
+				progress.FailStep(thumbStepIdx, err.Error())
+			} else {
+				progress.CompleteStep(thumbStepIdx)
+				outputs["Thumbnail"] = thumbPath
+			}
 		}
 	}
 
@@ -409,6 +474,12 @@ func outputResult(result *application.TranscribeResult) error {
 
 	fmt.Println(output)
 	return nil
+}
+
+// fileExists checks if a file exists
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // Execute runs the CLI
