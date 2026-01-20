@@ -610,6 +610,81 @@ func (d *Downloader) extractFileFrom7z(f *sevenzip.File, destPath string) error 
 	return nil
 }
 
+func (d *Downloader) DownloadThumbnail(ctx context.Context, reelID string, destPath string) error {
+	binPath := d.GetBinaryPath()
+	if binPath == "" {
+		return fmt.Errorf("yt-dlp not found")
+	}
+
+	url := buildReelURL(reelID)
+
+	// Download thumbnail only
+	args := []string{
+		"--no-warnings",
+		"--skip-download",
+		"--write-thumbnail",
+		"--convert-thumbnails", "jpg",
+		"-o", strings.TrimSuffix(destPath, filepath.Ext(destPath)),
+		url,
+	}
+
+	cmd := exec.CommandContext(ctx, binPath, args...)
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderr := string(exitErr.Stderr)
+			return fmt.Errorf("thumbnail download failed: %s", stderr)
+		}
+		return fmt.Errorf("thumbnail download failed: %w", err)
+	}
+
+	// yt-dlp adds extension, verify file exists
+	expectedPath := strings.TrimSuffix(destPath, filepath.Ext(destPath)) + ".jpg"
+	if _, err := os.Stat(expectedPath); err != nil {
+		// Try webp as fallback
+		webpPath := strings.TrimSuffix(destPath, filepath.Ext(destPath)) + ".webp"
+		if _, err := os.Stat(webpPath); err == nil {
+			return os.Rename(webpPath, destPath)
+		}
+		return fmt.Errorf("thumbnail file not found after download")
+	}
+
+	if expectedPath != destPath {
+		return os.Rename(expectedPath, destPath)
+	}
+	return nil
+}
+
+func (d *Downloader) DownloadVideo(ctx context.Context, reelID string, destPath string) error {
+	binPath := d.GetBinaryPath()
+	if binPath == "" {
+		return fmt.Errorf("yt-dlp not found")
+	}
+
+	url := buildReelURL(reelID)
+
+	// Download best quality video
+	args := []string{
+		"--no-warnings",
+		"-f", "best",
+		"-o", destPath,
+		url,
+	}
+
+	cmd := exec.CommandContext(ctx, binPath, args...)
+	if err := cmd.Run(); err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderr := string(exitErr.Stderr)
+			if strings.Contains(stderr, "Private video") || strings.Contains(stderr, "Video unavailable") {
+				return domain.ErrReelNotFound
+			}
+			return fmt.Errorf("video download failed: %s", stderr)
+		}
+		return fmt.Errorf("video download failed: %w", err)
+	}
+
+	return nil
+}
+
 // Ensure Downloader implements interfaces
 var _ ports.VideoDownloader = (*Downloader)(nil)
 var _ ports.AccountFetcher = (*Downloader)(nil)
