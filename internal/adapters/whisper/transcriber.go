@@ -166,6 +166,18 @@ func (t *Transcriber) DeleteModel(model string) error {
 	return os.Remove(t.modelPath(model))
 }
 
+func (t *Transcriber) GetBinaryPath() string {
+	if t.binPath != "" {
+		return t.binPath
+	}
+	t.binPath = t.findWhisperBinary()
+	return t.binPath
+}
+
+func (t *Transcriber) IsAvailable() bool {
+	return t.GetBinaryPath() != ""
+}
+
 func (t *Transcriber) Transcribe(ctx context.Context, videoPath string, opts ports.TranscribeOpts) (*domain.Transcript, error) {
 	model := opts.Model
 	if model == "" {
@@ -177,7 +189,7 @@ func (t *Transcriber) Transcribe(ctx context.Context, videoPath string, opts por
 	}
 
 	// Find whisper binary
-	whisperBin := t.findWhisperBinary()
+	whisperBin := t.GetBinaryPath()
 	if whisperBin == "" {
 		return nil, fmt.Errorf("whisper binary not found (install whisper.cpp)")
 	}

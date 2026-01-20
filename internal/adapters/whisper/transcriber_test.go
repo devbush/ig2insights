@@ -299,3 +299,43 @@ func TestWhisperBinaryName(t *testing.T) {
 		}
 	}
 }
+
+func TestIsAvailable_NotInstalled(t *testing.T) {
+	tmpDir := t.TempDir()
+	tr := NewTranscriber(tmpDir)
+	// With no binary in bundled location or PATH, should return false
+	// (unless whisper is actually installed on the system)
+	_ = tr.IsAvailable() // Just verify it doesn't panic
+}
+
+func TestGetBinaryPath_Caching(t *testing.T) {
+	t.Run("returns cached path", func(t *testing.T) {
+		tr := &Transcriber{binPath: "/cached/path/whisper"}
+		path1 := tr.GetBinaryPath()
+		path2 := tr.GetBinaryPath()
+		if path1 != "/cached/path/whisper" || path2 != path1 {
+			t.Errorf("GetBinaryPath() didn't return cached path")
+		}
+	})
+}
+
+func TestGetBinaryPath_Bundled(t *testing.T) {
+	// Create a temp bin directory with a fake whisper binary
+	tmpDir := t.TempDir()
+	binDir := filepath.Join(tmpDir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create fake binary
+	binaryPath := filepath.Join(binDir, whisperBinaryName())
+	if err := os.WriteFile(binaryPath, []byte("fake"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// We can't easily test this without mocking config.BinDir()
+	// So we just test that the methods exist and don't panic
+	tr := NewTranscriber(tmpDir)
+	_ = tr.GetBinaryPath()
+	_ = tr.IsAvailable()
+}
