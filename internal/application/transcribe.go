@@ -10,17 +10,22 @@ import (
 
 // TranscribeOptions configures the transcription
 type TranscribeOptions struct {
-	Model    string
-	Format   string // text, srt, json
-	NoCache  bool
-	Language string // empty defaults to "auto"
+	Model         string
+	Format        string // text, srt, json
+	NoCache       bool
+	Language      string // empty defaults to "auto"
+	SaveVideo     bool
+	SaveThumbnail bool
+	OutputDir     string // directory for outputs
 }
 
 // TranscribeResult contains the transcription result
 type TranscribeResult struct {
-	Reel       *domain.Reel
-	Transcript *domain.Transcript
-	FromCache  bool
+	Reel          *domain.Reel
+	Transcript    *domain.Transcript
+	FromCache     bool
+	VideoPath     string // populated if SaveVideo was true
+	ThumbnailPath string // populated if SaveThumbnail was true
 }
 
 // TranscribeService orchestrates the transcription process
