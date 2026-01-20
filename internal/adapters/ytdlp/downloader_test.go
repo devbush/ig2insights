@@ -278,3 +278,20 @@ func TestFFprobeBinaryName(t *testing.T) {
 		}
 	}
 }
+
+func TestIsFFmpegAvailable_NotInstalled(t *testing.T) {
+	d := NewDownloader()
+	// On a fresh system without ffmpeg in PATH or bundled, this should return false
+	// We can't easily test this without mocking, so we just verify the method exists
+	_ = d.IsFFmpegAvailable()
+}
+
+func TestGetFFmpegPath_Caching(t *testing.T) {
+	d := NewDownloader()
+	d.ffmpegPath = "/cached/path/ffmpeg"
+
+	path := d.GetFFmpegPath()
+	if path != "/cached/path/ffmpeg" {
+		t.Errorf("GetFFmpegPath() should return cached path, got %q", path)
+	}
+}

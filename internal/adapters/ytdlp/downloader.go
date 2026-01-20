@@ -82,6 +82,33 @@ func (d *Downloader) IsAvailable() bool {
 	return d.GetBinaryPath() != ""
 }
 
+func (d *Downloader) findFFmpeg() string {
+	// Check system PATH first (user may have ffmpeg installed)
+	if path, err := exec.LookPath(ffmpegBinaryName()); err == nil {
+		return path
+	}
+
+	// Check bundled location
+	bundled := filepath.Join(config.BinDir(), ffmpegBinaryName())
+	if _, err := os.Stat(bundled); err == nil {
+		return bundled
+	}
+
+	return ""
+}
+
+func (d *Downloader) GetFFmpegPath() string {
+	if d.ffmpegPath != "" {
+		return d.ffmpegPath
+	}
+	d.ffmpegPath = d.findFFmpeg()
+	return d.ffmpegPath
+}
+
+func (d *Downloader) IsFFmpegAvailable() bool {
+	return d.GetFFmpegPath() != ""
+}
+
 func (d *Downloader) Download(ctx context.Context, reelID string, destDir string) (*ports.DownloadResult, error) {
 	binPath := d.GetBinaryPath()
 	if binPath == "" {
