@@ -422,15 +422,29 @@ func (d *Downloader) ListReels(ctx context.Context, username string, sort domain
 		}
 
 		var info struct {
-			ID        string  `json:"id"`
-			Title     string  `json:"title"`
-			Uploader  string  `json:"uploader"`
-			Duration  float64 `json:"duration"`
-			ViewCount int64   `json:"view_count"`
+			ID           string  `json:"id"`
+			Title        string  `json:"title"`
+			Uploader     string  `json:"uploader"`
+			Duration     float64 `json:"duration"`
+			ViewCount    int64   `json:"view_count"`
+			LikeCount    int64   `json:"like_count"`
+			CommentCount int64   `json:"comment_count"`
+			UploadDate   string  `json:"upload_date"` // YYYYMMDD format
+			Timestamp    int64   `json:"timestamp"`   // Unix timestamp
 		}
 
 		if err := json.Unmarshal([]byte(line), &info); err != nil {
 			continue
+		}
+
+		var uploadedAt time.Time
+		if info.Timestamp > 0 {
+			uploadedAt = time.Unix(info.Timestamp, 0)
+		} else if info.UploadDate != "" {
+			// Parse YYYYMMDD format
+			if t, err := time.Parse("20060102", info.UploadDate); err == nil {
+				uploadedAt = t
+			}
 		}
 
 		reels = append(reels, &domain.Reel{
@@ -439,6 +453,9 @@ func (d *Downloader) ListReels(ctx context.Context, username string, sort domain
 			Title:           info.Title,
 			DurationSeconds: int(info.Duration),
 			ViewCount:       info.ViewCount,
+			LikeCount:       info.LikeCount,
+			CommentCount:    info.CommentCount,
+			UploadedAt:      uploadedAt,
 			FetchedAt:       time.Now(),
 		})
 	}
