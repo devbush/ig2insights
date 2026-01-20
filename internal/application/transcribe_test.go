@@ -119,8 +119,8 @@ func TestTranscribeService_Transcribe(t *testing.T) {
 		t.Errorf("Transcript text = %s, want 'Hello world transcription'", result.Transcript.Text)
 	}
 
-	if result.FromCache {
-		t.Errorf("FromCache should be false for fresh transcription")
+	if result.TranscriptFromCache {
+		t.Errorf("TranscriptFromCache should be false for fresh transcription")
 	}
 
 	// Verify it was cached
@@ -160,8 +160,8 @@ func TestTranscribeService_CacheHit(t *testing.T) {
 		t.Errorf("Should return cached result, got: %s", result.Transcript.Text)
 	}
 
-	if !result.FromCache {
-		t.Errorf("FromCache should be true for cached result")
+	if !result.TranscriptFromCache {
+		t.Errorf("TranscriptFromCache should be true for cached result")
 	}
 }
 
@@ -195,8 +195,8 @@ func TestTranscribeService_NoCacheBypass(t *testing.T) {
 		t.Errorf("Expected fresh transcription, got: %s", result.Transcript.Text)
 	}
 
-	if result.FromCache {
-		t.Errorf("FromCache should be false when NoCache is set")
+	if result.TranscriptFromCache {
+		t.Errorf("TranscriptFromCache should be false when NoCache is set")
 	}
 }
 

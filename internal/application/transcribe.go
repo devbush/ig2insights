@@ -23,9 +23,13 @@ type TranscribeOptions struct {
 type TranscribeResult struct {
 	Reel          *domain.Reel
 	Transcript    *domain.Transcript
-	FromCache     bool
-	VideoPath     string // populated if SaveVideo was true
-	ThumbnailPath string // populated if SaveThumbnail was true
+	VideoPath     string
+	ThumbnailPath string
+
+	// Per-asset cache status
+	TranscriptFromCache bool
+	VideoFromCache      bool
+	ThumbnailFromCache  bool
 }
 
 // TranscribeService orchestrates the transcription process
@@ -58,9 +62,9 @@ func (s *TranscribeService) Transcribe(ctx context.Context, reelID string, opts 
 		cached, err := s.cache.Get(ctx, reelID)
 		if err == nil {
 			return &TranscribeResult{
-				Reel:       cached.Reel,
-				Transcript: cached.Transcript,
-				FromCache:  true,
+				Reel:                cached.Reel,
+				Transcript:          cached.Transcript,
+				TranscriptFromCache: true,
 			}, nil
 		}
 	}
@@ -105,8 +109,8 @@ func (s *TranscribeService) Transcribe(ctx context.Context, reelID string, opts 
 	_ = s.cache.Set(ctx, reelID, cacheItem)
 
 	return &TranscribeResult{
-		Reel:       downloadResult.Reel,
-		Transcript: transcript,
-		FromCache:  false,
+		Reel:                downloadResult.Reel,
+		Transcript:          transcript,
+		TranscriptFromCache: false,
 	}, nil
 }
