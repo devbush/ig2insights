@@ -235,3 +235,40 @@ func (m *mockDownloaderWithError) DownloadVideo(ctx context.Context, reelID stri
 func (m *mockDownloaderWithError) DownloadThumbnail(ctx context.Context, reelID string, destPath string) error {
 	return nil
 }
+
+func TestTranscribeService_PartialCache_TranscriptOnly(t *testing.T) {
+	cache := newMockCache()
+	downloader := &mockDownloader{available: true}
+	transcriber := &mockTranscriber{modelDownloaded: true}
+
+	// Pre-populate cache with transcript only (no video path)
+	cache.Set(context.Background(), "partial123", &ports.CachedItem{
+		Reel:       &domain.Reel{ID: "partial123", Title: "Cached Reel"},
+		Transcript: &domain.Transcript{Text: "Cached transcript"},
+		VideoPath:  "", // No video cached
+		ExpiresAt:  time.Now().Add(24 * time.Hour),
+	})
+
+	svc := NewTranscribeService(cache, downloader, transcriber, 24*time.Hour)
+
+	ctx := context.Background()
+	result, err := svc.Transcribe(ctx, "partial123", TranscribeOptions{
+		SaveVideo: true, // Request video even though only transcript cached
+	})
+
+	if err != nil {
+		t.Fatalf("Transcribe() error = %v", err)
+	}
+
+	if !result.TranscriptFromCache {
+		t.Errorf("TranscriptFromCache should be true")
+	}
+
+	if result.VideoFromCache {
+		t.Errorf("VideoFromCache should be false - video wasn't cached")
+	}
+
+	if result.VideoPath == "" {
+		t.Errorf("VideoPath should be populated after download")
+	}
+}
