@@ -128,7 +128,7 @@ func (d *Downloader) FFmpegInstructions() string {
 	}
 }
 
-func (d *Downloader) Download(ctx context.Context, reelID string, destDir string) (*ports.DownloadResult, error) {
+func (d *Downloader) DownloadAudio(ctx context.Context, reelID string, destDir string) (*ports.DownloadResult, error) {
 	binPath := d.GetBinaryPath()
 	if binPath == "" {
 		return nil, fmt.Errorf("yt-dlp not found")
@@ -190,7 +190,7 @@ func (d *Downloader) Download(ctx context.Context, reelID string, destDir string
 		matches, _ := filepath.Glob(filepath.Join(destDir, "audio.*"))
 		if len(matches) > 0 {
 			return &ports.DownloadResult{
-				VideoPath: matches[0],
+				AudioPath: matches[0],
 				Reel: &domain.Reel{
 					ID:        reelID,
 					FetchedAt: time.Now(),
@@ -216,7 +216,7 @@ func (d *Downloader) Download(ctx context.Context, reelID string, destDir string
 	}
 
 	return &ports.DownloadResult{
-		VideoPath: audioPath,
+		AudioPath: audioPath,
 		Reel: &domain.Reel{
 			ID:              reelID,
 			URL:             url,
@@ -666,12 +666,18 @@ func (d *Downloader) DownloadVideo(ctx context.Context, reelID string, destPath 
 		return fmt.Errorf("yt-dlp not found")
 	}
 
+	// Check for ffmpeg (needed for merging video+audio)
+	if !d.IsFFmpegAvailable() {
+		return domain.ErrFFmpegNotFound
+	}
+
 	url := buildReelURL(reelID)
 
-	// Download best quality video
+	// Download best video+audio combined, fallback to best single stream
 	args := []string{
 		"--no-warnings",
-		"-f", "best",
+		"-f", "bv*+ba/b",
+		"--merge-output-format", "mp4",
 		"-o", destPath,
 		url,
 	}

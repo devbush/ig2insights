@@ -6,18 +6,18 @@ import (
 	"github.com/devbush/ig2insights/internal/domain"
 )
 
-// DownloadResult contains the downloaded video info
+// DownloadResult contains the downloaded audio info
 type DownloadResult struct {
-	VideoPath string
+	AudioPath string       // WAV audio file for transcription
 	Reel      *domain.Reel // Populated with metadata from download
 }
 
 // VideoDownloader handles video download from Instagram
 type VideoDownloader interface {
-	// Download fetches a video by reel ID, returns path to downloaded file
-	Download(ctx context.Context, reelID string, destDir string) (*DownloadResult, error)
+	// DownloadAudio extracts audio from a reel, returns path to WAV file
+	DownloadAudio(ctx context.Context, reelID string, destDir string) (*DownloadResult, error)
 
-	// DownloadVideo downloads the full video file (not just audio)
+	// DownloadVideo downloads the full video file (MP4 with audio)
 	DownloadVideo(ctx context.Context, reelID string, destPath string) error
 
 	// DownloadThumbnail downloads the video thumbnail
