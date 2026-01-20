@@ -3,6 +3,8 @@ package ytdlp
 import (
 	"runtime"
 	"testing"
+
+	"github.com/devbush/ig2insights/internal/domain"
 )
 
 func TestYtDlpBinaryName(t *testing.T) {
@@ -116,5 +118,137 @@ func TestGetBinaryPath_Caching(t *testing.T) {
 		if d.binPath != path {
 			t.Errorf("GetBinaryPath() binPath mismatch: field=%q, returned=%q", d.binPath, path)
 		}
+	})
+}
+
+func TestSortByViews(t *testing.T) {
+	t.Run("sorts reels by view count descending", func(t *testing.T) {
+		reels := []*domain.Reel{
+			{ID: "a", ViewCount: 100},
+			{ID: "b", ViewCount: 500},
+			{ID: "c", ViewCount: 200},
+			{ID: "d", ViewCount: 1000},
+		}
+
+		sortByViews(reels)
+
+		// Verify descending order
+		expected := []int64{1000, 500, 200, 100}
+		for i, reel := range reels {
+			if reel.ViewCount != expected[i] {
+				t.Errorf("sortByViews() index %d: got %d, want %d", i, reel.ViewCount, expected[i])
+			}
+		}
+	})
+
+	t.Run("handles empty slice", func(t *testing.T) {
+		var reels []*domain.Reel
+		// Should not panic
+		sortByViews(reels)
+		if len(reels) != 0 {
+			t.Errorf("sortByViews() modified empty slice")
+		}
+	})
+
+	t.Run("handles single element", func(t *testing.T) {
+		reels := []*domain.Reel{{ID: "a", ViewCount: 100}}
+		sortByViews(reels)
+		if reels[0].ViewCount != 100 {
+			t.Errorf("sortByViews() changed single element")
+		}
+	})
+
+	t.Run("handles already sorted slice", func(t *testing.T) {
+		reels := []*domain.Reel{
+			{ID: "a", ViewCount: 300},
+			{ID: "b", ViewCount: 200},
+			{ID: "c", ViewCount: 100},
+		}
+
+		sortByViews(reels)
+
+		expected := []int64{300, 200, 100}
+		for i, reel := range reels {
+			if reel.ViewCount != expected[i] {
+				t.Errorf("sortByViews() index %d: got %d, want %d", i, reel.ViewCount, expected[i])
+			}
+		}
+	})
+
+	t.Run("handles equal view counts", func(t *testing.T) {
+		reels := []*domain.Reel{
+			{ID: "a", ViewCount: 100},
+			{ID: "b", ViewCount: 100},
+			{ID: "c", ViewCount: 100},
+		}
+
+		sortByViews(reels)
+
+		// All should still have 100 views
+		for i, reel := range reels {
+			if reel.ViewCount != 100 {
+				t.Errorf("sortByViews() index %d: got %d, want 100", i, reel.ViewCount)
+			}
+		}
+	})
+}
+
+func TestGetAccount_NoBinary(t *testing.T) {
+	d := &Downloader{binPath: ""}
+
+	// Create a downloader that will not find the binary
+	// Since findBinary might actually find yt-dlp on the system,
+	// we need to test when binPath explicitly returns empty
+	d.binPath = "" // Reset to trigger lookup
+
+	// If yt-dlp is not installed, GetBinaryPath returns empty
+	// We can't easily mock this, so we test the error case directly
+	// by checking behavior when binary truly isn't found
+
+	// This test verifies the error message format
+	// when yt-dlp is not found
+	t.Run("returns error when binary not found", func(t *testing.T) {
+		// Create a downloader with explicit empty path that won't find binary
+		testDownloader := &Downloader{}
+
+		// Only run this assertion if yt-dlp is not actually installed
+		if testDownloader.GetBinaryPath() == "" {
+			_, err := testDownloader.GetAccount(nil, "testuser")
+			if err == nil {
+				t.Error("GetAccount() expected error when binary not found")
+			}
+			if err.Error() != "yt-dlp not found" {
+				t.Errorf("GetAccount() error = %q, want %q", err.Error(), "yt-dlp not found")
+			}
+		}
+	})
+}
+
+func TestListReels_NoBinary(t *testing.T) {
+	t.Run("returns error when binary not found", func(t *testing.T) {
+		testDownloader := &Downloader{}
+
+		// Only run this assertion if yt-dlp is not actually installed
+		if testDownloader.GetBinaryPath() == "" {
+			_, err := testDownloader.ListReels(nil, "testuser", domain.SortLatest, 10)
+			if err == nil {
+				t.Error("ListReels() expected error when binary not found")
+			}
+			if err.Error() != "yt-dlp not found" {
+				t.Errorf("ListReels() error = %q, want %q", err.Error(), "yt-dlp not found")
+			}
+		}
+	})
+}
+
+func TestAccountFetcherInterface(t *testing.T) {
+	// Verify that Downloader implements AccountFetcher interface at compile time
+	// This is also done via var _ ports.AccountFetcher = (*Downloader)(nil)
+	// but this test documents the intent
+	t.Run("Downloader implements AccountFetcher", func(t *testing.T) {
+		d := NewDownloader()
+		// If this compiles, the interface is satisfied
+		_ = d.GetAccount
+		_ = d.ListReels
 	})
 }

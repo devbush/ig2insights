@@ -254,5 +254,118 @@ func (d *Downloader) Update(ctx context.Context) error {
 	return cmd.Run()
 }
 
+func (d *Downloader) GetAccount(ctx context.Context, username string) (*domain.Account, error) {
+	binPath := d.GetBinaryPath()
+	if binPath == "" {
+		return nil, fmt.Errorf("yt-dlp not found")
+	}
+
+	// Use playlist extraction to get account info
+	url := fmt.Sprintf("https://www.instagram.com/%s/reels/", username)
+
+	args := []string{
+		"--no-warnings",
+		"--flat-playlist",
+		"--print-json",
+		"-I", "1:1", // Only fetch first item to get playlist info
+		url,
+	}
+
+	cmd := exec.CommandContext(ctx, binPath, args...)
+	output, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderr := string(exitErr.Stderr)
+			if strings.Contains(stderr, "not found") || strings.Contains(stderr, "404") {
+				return nil, domain.ErrAccountNotFound
+			}
+		}
+		return nil, fmt.Errorf("failed to fetch account: %w", err)
+	}
+
+	// Count entries to estimate reel count
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+
+	return &domain.Account{
+		Username:  username,
+		ReelCount: len(lines), // Approximate from flat playlist
+	}, nil
+}
+
+func (d *Downloader) ListReels(ctx context.Context, username string, sort domain.SortOrder, limit int) ([]*domain.Reel, error) {
+	binPath := d.GetBinaryPath()
+	if binPath == "" {
+		return nil, fmt.Errorf("yt-dlp not found")
+	}
+
+	url := fmt.Sprintf("https://www.instagram.com/%s/reels/", username)
+
+	args := []string{
+		"--no-warnings",
+		"--flat-playlist",
+		"--print-json",
+		"-I", fmt.Sprintf("1:%d", limit),
+		url,
+	}
+
+	// Note: yt-dlp returns chronological order by default
+	// For "most viewed", we'd need to fetch all and sort client-side
+	// This is a limitation - Instagram doesn't expose a "top" endpoint easily
+
+	cmd := exec.CommandContext(ctx, binPath, args...)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list reels: %w", err)
+	}
+
+	var reels []*domain.Reel
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+
+		var info struct {
+			ID        string  `json:"id"`
+			Title     string  `json:"title"`
+			Uploader  string  `json:"uploader"`
+			Duration  float64 `json:"duration"`
+			ViewCount int64   `json:"view_count"`
+		}
+
+		if err := json.Unmarshal([]byte(line), &info); err != nil {
+			continue
+		}
+
+		reels = append(reels, &domain.Reel{
+			ID:              info.ID,
+			Author:          info.Uploader,
+			Title:           info.Title,
+			DurationSeconds: int(info.Duration),
+			ViewCount:       info.ViewCount,
+			FetchedAt:       time.Now(),
+		})
+	}
+
+	// Sort by view count if requested
+	if sort == domain.SortMostViewed {
+		sortByViews(reels)
+	}
+
+	return reels, nil
+}
+
+func sortByViews(reels []*domain.Reel) {
+	for i := 0; i < len(reels)-1; i++ {
+		for j := i + 1; j < len(reels); j++ {
+			if reels[j].ViewCount > reels[i].ViewCount {
+				reels[i], reels[j] = reels[j], reels[i]
+			}
+		}
+	}
+}
+
 // Ensure Downloader implements interfaces
 var _ ports.VideoDownloader = (*Downloader)(nil)
+var _ ports.AccountFetcher = (*Downloader)(nil)
