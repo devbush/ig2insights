@@ -34,6 +34,7 @@ type ProgressDisplay struct {
 	quiet       bool
 	mu          sync.Mutex
 	lastRender  time.Time
+	rendered    bool
 }
 
 var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
@@ -55,7 +56,7 @@ func (p *ProgressDisplay) StartStep(index int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if index < len(p.steps) {
+	if index >= 0 && index < len(p.steps) {
 		p.currentStep = index
 		p.steps[index].Status = StepRunning
 		p.render()
@@ -67,7 +68,7 @@ func (p *ProgressDisplay) CompleteStep(index int) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if index < len(p.steps) {
+	if index >= 0 && index < len(p.steps) {
 		p.steps[index].Status = StepComplete
 		p.render()
 	}
@@ -78,7 +79,7 @@ func (p *ProgressDisplay) FailStep(index int, err string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if index < len(p.steps) {
+	if index >= 0 && index < len(p.steps) {
 		p.steps[index].Status = StepError
 		p.steps[index].Error = err
 		p.render()
@@ -90,7 +91,7 @@ func (p *ProgressDisplay) UpdateProgress(index int, current, total int64) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if index < len(p.steps) {
+	if index >= 0 && index < len(p.steps) {
 		p.steps[index].Current = current
 		p.steps[index].Total = total
 		if total > 0 {
@@ -121,9 +122,9 @@ func (p *ProgressDisplay) render() {
 
 	// Clear previous lines and redraw
 	// Move cursor up by number of steps, clear each line
-	if p.currentStep > 0 || p.steps[0].Status != StepPending {
+	if p.rendered {
 		fmt.Print("\033[" + fmt.Sprintf("%d", len(p.steps)) + "A") // Move up
-		fmt.Print("\033[J") // Clear from cursor to end
+		fmt.Print("\033[J")                                        // Clear from cursor to end
 	}
 
 	total := len(p.steps)
@@ -153,6 +154,8 @@ func (p *ProgressDisplay) render() {
 
 		fmt.Printf("%s %s... %s\n", stepNum, step.Name, status)
 	}
+
+	p.rendered = true
 }
 
 // Complete prints the final success message
