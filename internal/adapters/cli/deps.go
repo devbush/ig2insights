@@ -11,7 +11,7 @@ import (
 func NewDepsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "deps",
-		Short: "Manage dependencies (yt-dlp, whisper.cpp)",
+		Short: "Manage dependencies (yt-dlp, whisper.cpp, ffmpeg)",
 	}
 
 	statusCmd := &cobra.Command{
@@ -60,6 +60,14 @@ func runDepsStatus(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  whisper.cpp:   installed (%s)\n", path)
 	} else {
 		fmt.Println("  whisper.cpp:   not found")
+	}
+
+	// ffmpeg
+	if app.Downloader.IsFFmpegAvailable() {
+		path := app.Downloader.GetFFmpegPath()
+		fmt.Printf("  ffmpeg:        installed (%s)\n", path)
+	} else {
+		fmt.Println("  ffmpeg:        not found")
 	}
 
 	// Whisper models
@@ -131,6 +139,22 @@ func runDepsInstall(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to install whisper.cpp: %w", err)
 		}
 		fmt.Println("\nwhisper.cpp installed")
+	}
+
+	// Install ffmpeg
+	if app.Downloader.IsFFmpegAvailable() {
+		fmt.Println("ffmpeg is already installed")
+	} else {
+		instructions := app.Downloader.FFmpegInstructions()
+		if instructions != "" {
+			fmt.Println(instructions)
+		} else {
+			fmt.Println("Installing ffmpeg...")
+			if err := app.Downloader.InstallFFmpeg(ctx, progress); err != nil {
+				return fmt.Errorf("failed to install ffmpeg: %w", err)
+			}
+			fmt.Println("\nffmpeg installed")
+		}
 	}
 
 	return nil
