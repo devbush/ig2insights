@@ -15,6 +15,9 @@ type Reel struct {
 	Title           string
 	DurationSeconds int
 	ViewCount       int64
+	LikeCount       int64     // Number of likes on the reel
+	CommentCount    int64     // Number of comments on the reel
+	UploadedAt      time.Time // When the reel was posted
 	FetchedAt       time.Time
 }
 
