@@ -11,7 +11,8 @@ import (
 type CachedItem struct {
 	Reel          *domain.Reel
 	Transcript    *domain.Transcript
-	VideoPath     string
+	AudioPath     string // WAV audio for transcription and --audio
+	VideoPath     string // MP4 video for --video
 	ThumbnailPath string
 	CreatedAt     time.Time
 	ExpiresAt     time.Time

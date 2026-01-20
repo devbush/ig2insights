@@ -26,6 +26,7 @@ func NewFileCache(baseDir string, ttl time.Duration) *FileCache {
 type metaFile struct {
 	Reel          *domain.Reel       `json:"reel"`
 	Transcript    *domain.Transcript `json:"transcript"`
+	AudioPath     string             `json:"audio_path"`
 	VideoPath     string             `json:"video_path"`
 	ThumbnailPath string             `json:"thumbnail_path"`
 	CreatedAt     time.Time          `json:"created_at"`
@@ -63,6 +64,7 @@ func (c *FileCache) Get(ctx context.Context, reelID string) (*ports.CachedItem, 
 	return &ports.CachedItem{
 		Reel:          meta.Reel,
 		Transcript:    meta.Transcript,
+		AudioPath:     meta.AudioPath,
 		VideoPath:     meta.VideoPath,
 		ThumbnailPath: meta.ThumbnailPath,
 		CreatedAt:     meta.CreatedAt,
@@ -79,6 +81,7 @@ func (c *FileCache) Set(ctx context.Context, reelID string, item *ports.CachedIt
 	meta := metaFile{
 		Reel:          item.Reel,
 		Transcript:    item.Transcript,
+		AudioPath:     item.AudioPath,
 		VideoPath:     item.VideoPath,
 		ThumbnailPath: item.ThumbnailPath,
 		CreatedAt:     item.CreatedAt,
