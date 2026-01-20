@@ -1,12 +1,14 @@
 package cli
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -81,6 +83,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 func runInteractiveMenu() error {
 	options := []tui.MenuOption{
 		{Label: "Transcribe a single reel", Value: "transcribe"},
+		{Label: "Batch process multiple reels", Value: "batch"},
 		// Note: "Browse an account's reels" hidden - Instagram blocking yt-dlp user page scraping
 		{Label: "Manage cache", Value: "cache"},
 		{Label: "Quit", Value: "quit"},
@@ -94,6 +97,8 @@ func runInteractiveMenu() error {
 	switch selected {
 	case "transcribe":
 		return runTranscribeInteractive()
+	case "batch":
+		return runBatchInteractive()
 	case "account":
 		fmt.Print("Enter username: ")
 		var username string
@@ -106,6 +111,57 @@ func runInteractiveMenu() error {
 	}
 
 	return nil
+}
+
+func runBatchInteractive() error {
+	fmt.Println("Enter reel URLs or IDs (one per line, empty line when done):")
+	fmt.Println("Or enter a file path starting with @")
+	fmt.Println()
+
+	var inputs []string
+	scanner := bufio.NewScanner(os.Stdin)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			break
+		}
+		if strings.HasPrefix(line, "@") {
+			// File path
+			batchFileFlag = strings.TrimPrefix(line, "@")
+		} else {
+			inputs = append(inputs, line)
+		}
+	}
+
+	if len(inputs) == 0 && batchFileFlag == "" {
+		fmt.Println("No inputs provided")
+		return nil
+	}
+
+	// Collect and process
+	reelIDs, err := CollectInputs(inputs, batchFileFlag)
+	if err != nil {
+		return err
+	}
+
+	if len(reelIDs) == 0 {
+		fmt.Println("No valid reel URLs or IDs found")
+		return nil
+	}
+
+	fmt.Printf("Found %d reels to process\n", len(reelIDs))
+
+	app, err := GetApp()
+	if err != nil {
+		return err
+	}
+
+	outputDir := dirFlag
+	if outputDir == "" {
+		outputDir = "."
+	}
+
+	return processBatch(context.Background(), app, reelIDs, outputDir)
 }
 
 func runTranscribeInteractive() error {
