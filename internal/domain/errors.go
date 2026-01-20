@@ -26,4 +26,7 @@ var (
 
 	// ErrCacheMiss indicates item not in cache
 	ErrCacheMiss = errors.New("cache miss")
+
+	// ErrFFmpegNotFound indicates ffmpeg is not installed
+	ErrFFmpegNotFound = errors.New("ffmpeg not found")
 )
