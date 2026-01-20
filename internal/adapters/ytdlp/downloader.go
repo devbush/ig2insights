@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -284,11 +285,18 @@ func (d *Downloader) GetAccount(ctx context.Context, username string) (*domain.A
 	}
 
 	// Count entries to estimate reel count
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	// Note: ReelCount will be 0 or 1 due to the -I 1:1 flag limiting to first item.
+	// This is a limitation - we only fetch one item to quickly verify the account exists.
+	// A full reel count would require fetching the entire playlist which is slow.
+	trimmed := strings.TrimSpace(string(output))
+	var reelCount int
+	if trimmed != "" {
+		reelCount = len(strings.Split(trimmed, "\n"))
+	}
 
 	return &domain.Account{
 		Username:  username,
-		ReelCount: len(lines), // Approximate from flat playlist
+		ReelCount: reelCount,
 	}, nil
 }
 
@@ -315,6 +323,15 @@ func (d *Downloader) ListReels(ctx context.Context, username string, sort domain
 	cmd := exec.CommandContext(ctx, binPath, args...)
 	output, err := cmd.Output()
 	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			stderr := string(exitErr.Stderr)
+			if strings.Contains(stderr, "not found") || strings.Contains(stderr, "404") {
+				return nil, domain.ErrAccountNotFound
+			}
+			if strings.Contains(stderr, "rate") || strings.Contains(stderr, "429") {
+				return nil, domain.ErrRateLimited
+			}
+		}
 		return nil, fmt.Errorf("failed to list reels: %w", err)
 	}
 
@@ -357,13 +374,9 @@ func (d *Downloader) ListReels(ctx context.Context, username string, sort domain
 }
 
 func sortByViews(reels []*domain.Reel) {
-	for i := 0; i < len(reels)-1; i++ {
-		for j := i + 1; j < len(reels); j++ {
-			if reels[j].ViewCount > reels[i].ViewCount {
-				reels[i], reels[j] = reels[j], reels[i]
-			}
-		}
-	}
+	sort.Slice(reels, func(i, j int) bool {
+		return reels[i].ViewCount > reels[j].ViewCount
+	})
 }
 
 // Ensure Downloader implements interfaces
