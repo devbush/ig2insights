@@ -440,6 +440,95 @@ func sortByViews(reels []*domain.Reel) {
 	})
 }
 
+func (d *Downloader) InstallFFmpeg(ctx context.Context, progress func(downloaded, total int64)) error {
+	downloadURL := d.getFFmpegDownloadURL()
+	if downloadURL == "" {
+		return fmt.Errorf("no prebuilt ffmpeg binary for %s.\n%s", runtime.GOOS, d.FFmpegInstructions())
+	}
+
+	binDir := config.BinDir()
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		return err
+	}
+
+	// Download 7z to temp file
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to download ffmpeg: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to download ffmpeg: HTTP %d", resp.StatusCode)
+	}
+
+	// Download to temp file
+	tmpFile, err := os.CreateTemp("", "ffmpeg-*.7z")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	total := resp.ContentLength
+	var downloaded int64
+
+	buf := make([]byte, 32*1024)
+	for {
+		select {
+		case <-ctx.Done():
+			tmpFile.Close()
+			return ctx.Err()
+		default:
+		}
+
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			_, writeErr := tmpFile.Write(buf[:n])
+			if writeErr != nil {
+				tmpFile.Close()
+				return writeErr
+			}
+			downloaded += int64(n)
+			if progress != nil {
+				progress(downloaded, total)
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			tmpFile.Close()
+			return err
+		}
+	}
+	tmpFile.Close()
+
+	// Track success to clean up extracted files on failure
+	ffmpegPath := filepath.Join(binDir, ffmpegBinaryName())
+	ffprobePath := filepath.Join(binDir, ffprobeBinaryName())
+	success := false
+	defer func() {
+		if !success {
+			os.Remove(ffmpegPath)
+			os.Remove(ffprobePath)
+		}
+	}()
+
+	if err := d.extractFFmpegFrom7z(tmpPath, binDir); err != nil {
+		return err
+	}
+
+	d.ffmpegPath = ffmpegPath
+	success = true
+	return nil
+}
+
 func (d *Downloader) extractFFmpegFrom7z(archivePath, binDir string) error {
 	r, err := sevenzip.OpenReader(archivePath)
 	if err != nil {

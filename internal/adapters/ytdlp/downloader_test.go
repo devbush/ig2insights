@@ -1,6 +1,7 @@
 package ytdlp
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -346,5 +347,21 @@ func TestExtractFFmpegFrom7z_InvalidArchive(t *testing.T) {
 	err := d.extractFFmpegFrom7z(invalidPath, tmpDir)
 	if err == nil {
 		t.Error("extractFFmpegFrom7z() should fail on invalid archive")
+	}
+}
+
+func TestInstallFFmpeg_NonWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping non-Windows test on Windows")
+	}
+
+	d := NewDownloader()
+	err := d.InstallFFmpeg(context.Background(), nil)
+
+	if err == nil {
+		t.Error("InstallFFmpeg() should return error on non-Windows")
+	}
+	if !strings.Contains(err.Error(), "no prebuilt") {
+		t.Errorf("InstallFFmpeg() error should mention 'no prebuilt', got: %v", err)
 	}
 }
