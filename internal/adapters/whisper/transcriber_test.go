@@ -394,13 +394,14 @@ func TestInstall_NonWindows(t *testing.T) {
 	}
 }
 
-func TestExtractMainFromZip(t *testing.T) {
+func TestExtractWhisperFromZip(t *testing.T) {
 	tmpDir := t.TempDir()
+	binDir := filepath.Join(tmpDir, "bin")
+	os.MkdirAll(binDir, 0755)
 	tr := NewTranscriber(tmpDir)
 
-	// Create a test zip file with main.exe
+	// Create a test zip file with whisper-cli.exe and DLLs
 	zipPath := filepath.Join(tmpDir, "test.zip")
-	destPath := filepath.Join(tmpDir, "extracted.exe")
 
 	// Create zip
 	zipFile, err := os.Create(zipPath)
@@ -409,38 +410,56 @@ func TestExtractMainFromZip(t *testing.T) {
 	}
 	zipWriter := zip.NewWriter(zipFile)
 
-	// Add main.exe to zip
-	w, err := zipWriter.Create("main.exe")
-	if err != nil {
-		t.Fatal(err)
+	// Add whisper-cli.exe to zip (in Release/ directory like the real zip)
+	files := map[string]string{
+		"Release/whisper-cli.exe": "fake whisper binary",
+		"Release/ggml-base.dll":   "fake dll 1",
+		"Release/ggml-cpu.dll":    "fake dll 2",
+		"Release/ggml.dll":        "fake dll 3",
+		"Release/whisper.dll":     "fake dll 4",
 	}
-	w.Write([]byte("fake binary content"))
+	for name, content := range files {
+		w, err := zipWriter.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.Write([]byte(content))
+	}
 	zipWriter.Close()
 	zipFile.Close()
 
 	// Extract
-	err = tr.extractMainFromZip(zipPath, destPath)
+	err = tr.extractWhisperFromZip(zipPath, binDir)
 	if err != nil {
-		t.Fatalf("extractMainFromZip() failed: %v", err)
+		t.Fatalf("extractWhisperFromZip() failed: %v", err)
 	}
 
-	// Verify file exists
-	content, err := os.ReadFile(destPath)
+	// Verify whisper binary exists (renamed to whisper.exe on Windows)
+	whisperPath := filepath.Join(binDir, whisperBinaryName())
+	content, err := os.ReadFile(whisperPath)
 	if err != nil {
-		t.Fatalf("failed to read extracted file: %v", err)
+		t.Fatalf("failed to read extracted whisper binary: %v", err)
 	}
-	if string(content) != "fake binary content" {
-		t.Errorf("extracted content = %q, want 'fake binary content'", content)
+	if string(content) != "fake whisper binary" {
+		t.Errorf("extracted content = %q, want 'fake whisper binary'", content)
+	}
+
+	// Verify DLLs exist
+	for _, dll := range []string{"ggml-base.dll", "ggml-cpu.dll", "ggml.dll", "whisper.dll"} {
+		if _, err := os.Stat(filepath.Join(binDir, dll)); os.IsNotExist(err) {
+			t.Errorf("expected %s to be extracted", dll)
+		}
 	}
 }
 
-func TestExtractMainFromZip_NotFound(t *testing.T) {
+func TestExtractWhisperFromZip_NotFound(t *testing.T) {
 	tmpDir := t.TempDir()
+	binDir := filepath.Join(tmpDir, "bin")
+	os.MkdirAll(binDir, 0755)
 	tr := NewTranscriber(tmpDir)
 
-	// Create a zip without main.exe
+	// Create a zip without whisper-cli.exe
 	zipPath := filepath.Join(tmpDir, "test.zip")
-	destPath := filepath.Join(tmpDir, "extracted.exe")
 
 	zipFile, _ := os.Create(zipPath)
 	zipWriter := zip.NewWriter(zipFile)
@@ -449,8 +468,8 @@ func TestExtractMainFromZip_NotFound(t *testing.T) {
 	zipWriter.Close()
 	zipFile.Close()
 
-	err := tr.extractMainFromZip(zipPath, destPath)
+	err := tr.extractWhisperFromZip(zipPath, binDir)
 	if err == nil {
-		t.Error("extractMainFromZip() should fail when main.exe not in zip")
+		t.Error("extractWhisperFromZip() should fail when whisper-cli.exe not in zip")
 	}
 }

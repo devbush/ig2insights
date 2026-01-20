@@ -211,7 +211,13 @@ func (t *Transcriber) Transcribe(ctx context.Context, videoPath string, opts por
 	}
 
 	cmd := exec.CommandContext(ctx, whisperBin, args...)
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		errMsg := stderr.String()
+		if errMsg != "" {
+			return nil, fmt.Errorf("transcription failed: %s", strings.TrimSpace(errMsg))
+		}
 		return nil, fmt.Errorf("transcription failed: %w", err)
 	}
 
@@ -398,18 +404,21 @@ func (t *Transcriber) Install(ctx context.Context, progress func(downloaded, tot
 	}
 	tmpFile.Close()
 
-	// Extract main.exe from zip and rename to whisper.exe
+	// Track success to clean up extracted files on failure
 	destPath := filepath.Join(binDir, whisperBinaryName())
-
-	// Track success to clean up destination binary on failure
 	success := false
 	defer func() {
 		if !success {
+			// Clean up all extracted files
 			os.Remove(destPath)
+			os.Remove(filepath.Join(binDir, "ggml-base.dll"))
+			os.Remove(filepath.Join(binDir, "ggml-cpu.dll"))
+			os.Remove(filepath.Join(binDir, "ggml.dll"))
+			os.Remove(filepath.Join(binDir, "whisper.dll"))
 		}
 	}()
 
-	if err := t.extractMainFromZip(tmpPath, destPath); err != nil {
+	if err := t.extractWhisperFromZip(tmpPath, binDir); err != nil {
 		return err
 	}
 
@@ -418,29 +427,48 @@ func (t *Transcriber) Install(ctx context.Context, progress func(downloaded, tot
 	return nil
 }
 
-func (t *Transcriber) extractMainFromZip(zipPath, destPath string) error {
+func (t *Transcriber) extractWhisperFromZip(zipPath, binDir string) error {
 	r, err := zip.OpenReader(zipPath)
 	if err != nil {
 		return fmt.Errorf("failed to open zip: %w", err)
 	}
 	defer r.Close()
 
-	// Look for main.exe in the zip
-	var mainFile *zip.File
+	// Files to extract: whisper-cli.exe and required DLLs
+	filesToExtract := map[string]string{
+		"whisper-cli.exe": whisperBinaryName(), // Rename to whisper.exe
+		"ggml-base.dll":   "ggml-base.dll",
+		"ggml-cpu.dll":    "ggml-cpu.dll",
+		"ggml.dll":        "ggml.dll",
+		"whisper.dll":     "whisper.dll",
+	}
+
+	extracted := make(map[string]bool)
+
 	for _, f := range r.File {
 		name := filepath.Base(f.Name)
-		if name == "main.exe" || name == "main" {
-			mainFile = f
-			break
+		destName, needed := filesToExtract[name]
+		if !needed {
+			continue
 		}
+
+		destPath := filepath.Join(binDir, destName)
+		if err := extractFile(f, destPath); err != nil {
+			return fmt.Errorf("failed to extract %s: %w", name, err)
+		}
+		extracted[name] = true
 	}
 
-	if mainFile == nil {
-		return fmt.Errorf("main executable not found in whisper.cpp zip")
+	// Verify whisper-cli.exe was extracted
+	if !extracted["whisper-cli.exe"] {
+		return fmt.Errorf("whisper-cli.exe not found in whisper.cpp zip")
 	}
 
-	// Extract to destination
-	src, err := mainFile.Open()
+	return nil
+}
+
+func extractFile(f *zip.File, destPath string) error {
+	src, err := f.Open()
 	if err != nil {
 		return err
 	}
