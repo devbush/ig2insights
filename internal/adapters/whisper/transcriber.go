@@ -310,5 +310,23 @@ func parseTimestamp(ts string) float64 {
 	return float64(hours)*3600 + float64(minutes)*60 + float64(seconds) + float64(millis)/1000
 }
 
+func (t *Transcriber) getDownloadURL() string {
+	if runtime.GOOS == "windows" {
+		return "https://github.com/ggerganov/whisper.cpp/releases/latest/download/whisper-bin-x64.zip"
+	}
+	return ""
+}
+
+func (t *Transcriber) InstallationInstructions() string {
+	switch runtime.GOOS {
+	case "windows":
+		return "" // Auto-download available
+	case "darwin":
+		return "whisper.cpp not found. Install with:\n  brew install whisper-cpp"
+	default:
+		return "whisper.cpp not found. Build from source:\n  git clone https://github.com/ggerganov/whisper.cpp\n  cd whisper.cpp && make\n  sudo cp main /usr/local/bin/whisper"
+	}
+}
+
 // Ensure Transcriber implements interface
 var _ ports.Transcriber = (*Transcriber)(nil)

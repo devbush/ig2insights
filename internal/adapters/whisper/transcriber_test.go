@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -338,4 +339,40 @@ func TestGetBinaryPath_Bundled(t *testing.T) {
 	tr := NewTranscriber(tmpDir)
 	_ = tr.GetBinaryPath()
 	_ = tr.IsAvailable()
+}
+
+func TestGetDownloadURL(t *testing.T) {
+	tr := NewTranscriber(t.TempDir())
+	url := tr.getDownloadURL()
+
+	if runtime.GOOS == "windows" {
+		expected := "https://github.com/ggerganov/whisper.cpp/releases/latest/download/whisper-bin-x64.zip"
+		if url != expected {
+			t.Errorf("getDownloadURL() = %s, want %s", url, expected)
+		}
+	} else {
+		// Non-Windows should return empty string
+		if url != "" {
+			t.Errorf("getDownloadURL() on %s should return empty, got %s", runtime.GOOS, url)
+		}
+	}
+}
+
+func TestInstallationInstructions(t *testing.T) {
+	tr := NewTranscriber(t.TempDir())
+	instructions := tr.InstallationInstructions()
+
+	if runtime.GOOS == "windows" {
+		if instructions != "" {
+			t.Error("Windows should have no installation instructions (auto-download available)")
+		}
+	} else if runtime.GOOS == "darwin" {
+		if !strings.Contains(instructions, "brew install") {
+			t.Error("macOS instructions should mention brew")
+		}
+	} else {
+		if !strings.Contains(instructions, "git clone") {
+			t.Error("Linux instructions should mention git clone")
+		}
+	}
 }
