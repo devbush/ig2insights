@@ -15,12 +15,16 @@ import (
 
 var (
 	// Global flags
-	formatFlag   string
-	modelFlag    string
-	cacheTTLFlag string
-	noCacheFlag  bool
-	outputFlag   string
-	quietFlag    bool
+	formatFlag      string
+	modelFlag       string
+	cacheTTLFlag    string
+	noCacheFlag     bool
+	outputFlag      string
+	quietFlag       bool
+	languageFlag    string
+	videoFlag       bool
+	thumbnailFlag   bool
+	downloadDirFlag string
 )
 
 // NewRootCmd creates the root command
@@ -43,6 +47,10 @@ for an interactive menu.`,
 	rootCmd.PersistentFlags().BoolVar(&noCacheFlag, "no-cache", false, "Skip cache")
 	rootCmd.PersistentFlags().StringVarP(&outputFlag, "output", "o", "", "Output file path")
 	rootCmd.PersistentFlags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress progress output")
+	rootCmd.PersistentFlags().StringVarP(&languageFlag, "language", "l", "auto", "Language code (auto, en, fr, es, etc.)")
+	rootCmd.PersistentFlags().BoolVar(&videoFlag, "video", false, "Download the original video file")
+	rootCmd.PersistentFlags().BoolVar(&thumbnailFlag, "thumbnail", false, "Download the video thumbnail")
+	rootCmd.PersistentFlags().StringVar(&downloadDirFlag, "download-dir", "", "Directory for downloaded assets (default: same as output)")
 
 	// Add subcommands
 	rootCmd.AddCommand(NewAccountCmd())
