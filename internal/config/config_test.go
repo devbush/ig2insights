@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestDefaultConfig(t *testing.T) {
@@ -79,5 +80,40 @@ func TestAppDir(t *testing.T) {
 	expected := filepath.Join(home, ".ig2insights")
 	if dir != expected {
 		t.Errorf("AppDir() = %s, want %s", dir, expected)
+	}
+}
+
+func TestGetCacheTTL(t *testing.T) {
+	cfg := DefaultConfig()
+	dur, err := cfg.GetCacheTTL()
+	if err != nil {
+		t.Fatalf("GetCacheTTL() error = %v", err)
+	}
+	expected := 7 * 24 * time.Hour
+	if dur != expected {
+		t.Errorf("GetCacheTTL() = %v, want %v", dur, expected)
+	}
+}
+
+func TestLoad_NonExistentReturnsDefault(t *testing.T) {
+	cfg, err := Load("/nonexistent/path/config.yaml")
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Defaults.Model != "small" {
+		t.Errorf("Expected default config when file doesn't exist")
+	}
+}
+
+func TestLoad_MalformedYAML(t *testing.T) {
+	tmpDir := t.TempDir()
+	configPath := filepath.Join(tmpDir, "config.yaml")
+
+	// Write invalid YAML
+	os.WriteFile(configPath, []byte("invalid: yaml: content: ["), 0644)
+
+	_, err := Load(configPath)
+	if err == nil {
+		t.Error("Load() should error on malformed YAML")
 	}
 }
