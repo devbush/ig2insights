@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -284,4 +285,17 @@ func TestFindWhisperBinary_NotFound(t *testing.T) {
 	// We can't assert much here since it depends on system state
 	// Just verify it doesn't panic
 	_ = path
+}
+
+func TestWhisperBinaryName(t *testing.T) {
+	name := whisperBinaryName()
+	if runtime.GOOS == "windows" {
+		if name != "whisper.exe" {
+			t.Errorf("whisperBinaryName() = %s, want whisper.exe", name)
+		}
+	} else {
+		if name != "whisper" {
+			t.Errorf("whisperBinaryName() = %s, want whisper", name)
+		}
+	}
 }

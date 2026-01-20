@@ -32,6 +32,14 @@ var modelSizes = map[string]int64{
 // Transcriber implements ports.Transcriber using whisper.cpp
 type Transcriber struct {
 	modelsDir string
+	binPath   string
+}
+
+func whisperBinaryName() string {
+	if runtime.GOOS == "windows" {
+		return "whisper.exe"
+	}
+	return "whisper"
 }
 
 // NewTranscriber creates a new Whisper transcriber
