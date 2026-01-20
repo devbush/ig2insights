@@ -2,6 +2,7 @@ package ytdlp
 
 import (
 	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/devbush/ig2insights/internal/domain"
@@ -293,5 +294,41 @@ func TestGetFFmpegPath_Caching(t *testing.T) {
 	path := d.GetFFmpegPath()
 	if path != "/cached/path/ffmpeg" {
 		t.Errorf("GetFFmpegPath() should return cached path, got %q", path)
+	}
+}
+
+func TestGetFFmpegDownloadURL(t *testing.T) {
+	d := NewDownloader()
+	url := d.getFFmpegDownloadURL()
+
+	if runtime.GOOS == "windows" {
+		expected := "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.7z"
+		if url != expected {
+			t.Errorf("getFFmpegDownloadURL() = %q, want %q", url, expected)
+		}
+	} else {
+		if url != "" {
+			t.Errorf("getFFmpegDownloadURL() should be empty on non-Windows, got %q", url)
+		}
+	}
+}
+
+func TestFFmpegInstructions(t *testing.T) {
+	d := NewDownloader()
+	instructions := d.FFmpegInstructions()
+
+	switch runtime.GOOS {
+	case "windows":
+		if instructions != "" {
+			t.Errorf("FFmpegInstructions() should be empty on Windows (auto-download), got %q", instructions)
+		}
+	case "darwin":
+		if !strings.Contains(instructions, "brew install ffmpeg") {
+			t.Errorf("FFmpegInstructions() should mention brew, got %q", instructions)
+		}
+	default:
+		if !strings.Contains(instructions, "apt") && !strings.Contains(instructions, "dnf") {
+			t.Errorf("FFmpegInstructions() should mention apt or dnf, got %q", instructions)
+		}
 	}
 }

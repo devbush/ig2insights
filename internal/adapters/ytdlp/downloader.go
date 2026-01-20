@@ -109,6 +109,24 @@ func (d *Downloader) IsFFmpegAvailable() bool {
 	return d.GetFFmpegPath() != ""
 }
 
+func (d *Downloader) getFFmpegDownloadURL() string {
+	if runtime.GOOS == "windows" {
+		return "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.7z"
+	}
+	return ""
+}
+
+func (d *Downloader) FFmpegInstructions() string {
+	switch runtime.GOOS {
+	case "windows":
+		return "" // Auto-download available
+	case "darwin":
+		return "ffmpeg not found. Install with:\n  brew install ffmpeg"
+	default:
+		return "ffmpeg not found. Install with:\n  sudo apt install ffmpeg  # Debian/Ubuntu\n  sudo dnf install ffmpeg  # Fedora"
+	}
+}
+
 func (d *Downloader) Download(ctx context.Context, reelID string, destDir string) (*ports.DownloadResult, error) {
 	binPath := d.GetBinaryPath()
 	if binPath == "" {
