@@ -62,6 +62,10 @@ func (m *mockDownloader) IsAvailable() bool                                     
 func (m *mockDownloader) GetBinaryPath() string                                           { return "/usr/bin/yt-dlp" }
 func (m *mockDownloader) Install(ctx context.Context, progress func(int64, int64)) error  { return nil }
 func (m *mockDownloader) Update(ctx context.Context) error                                { return nil }
+func (m *mockDownloader) IsFFmpegAvailable() bool                                         { return true }
+func (m *mockDownloader) GetFFmpegPath() string                                           { return "/usr/bin/ffmpeg" }
+func (m *mockDownloader) InstallFFmpeg(ctx context.Context, progress func(int64, int64)) error { return nil }
+func (m *mockDownloader) FFmpegInstructions() string                                      { return "" }
 
 type mockTranscriber struct {
 	modelDownloaded bool
@@ -215,3 +219,7 @@ func (m *mockDownloaderWithError) IsAvailable() bool                            
 func (m *mockDownloaderWithError) GetBinaryPath() string                                           { return "/usr/bin/yt-dlp" }
 func (m *mockDownloaderWithError) Install(ctx context.Context, progress func(int64, int64)) error  { return nil }
 func (m *mockDownloaderWithError) Update(ctx context.Context) error                                { return nil }
+func (m *mockDownloaderWithError) IsFFmpegAvailable() bool                                         { return true }
+func (m *mockDownloaderWithError) GetFFmpegPath() string                                           { return "/usr/bin/ffmpeg" }
+func (m *mockDownloaderWithError) InstallFFmpeg(ctx context.Context, progress func(int64, int64)) error { return nil }
+func (m *mockDownloaderWithError) FFmpegInstructions() string                                      { return "" }
