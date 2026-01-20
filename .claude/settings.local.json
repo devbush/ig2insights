@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(superpowers:brainstorming)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Skill(superpowers:writing-plans)",
+      "Skill(superpowers:subagent-driven-development)",
+      "Bash(go test:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(go build:*)",
+      "Bash(./ig2insights:*)",
+      "Bash(git checkout:*)",
+      "Bash(git show:*)",
+      "Skill(superpowers:systematic-debugging)"
+    ]
+  }
+}
