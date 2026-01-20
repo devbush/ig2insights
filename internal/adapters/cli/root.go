@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 
@@ -128,6 +129,18 @@ func runTranscribe(input string) error {
 			return fmt.Errorf("failed to install yt-dlp: %w", err)
 		}
 		fmt.Println("\n✓ yt-dlp installed")
+	}
+
+	if !app.Transcriber.IsAvailable() {
+		instructions := app.Transcriber.InstallationInstructions()
+		if instructions != "" {
+			return errors.New(instructions)
+		}
+		fmt.Println("whisper.cpp not found. Installing...")
+		if err := app.Transcriber.Install(context.Background(), printProgress); err != nil {
+			return fmt.Errorf("failed to install whisper.cpp: %w", err)
+		}
+		fmt.Println("\n✓ whisper.cpp installed")
 	}
 
 	model := modelFlag
