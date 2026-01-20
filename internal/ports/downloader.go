@@ -28,4 +28,16 @@ type VideoDownloader interface {
 
 	// Update updates yt-dlp to latest version
 	Update(ctx context.Context) error
+
+	// IsFFmpegAvailable checks if ffmpeg is installed
+	IsFFmpegAvailable() bool
+
+	// GetFFmpegPath returns path to ffmpeg binary
+	GetFFmpegPath() string
+
+	// InstallFFmpeg downloads and installs ffmpeg (Windows only)
+	InstallFFmpeg(ctx context.Context, progress func(downloaded, total int64)) error
+
+	// FFmpegInstructions returns platform-specific install instructions
+	FFmpegInstructions() string
 }
