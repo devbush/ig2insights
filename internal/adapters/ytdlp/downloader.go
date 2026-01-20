@@ -200,9 +200,19 @@ func (d *Downloader) Download(ctx context.Context, reelID string, destDir string
 		return nil, fmt.Errorf("failed to parse yt-dlp output: %w", err)
 	}
 
-	audioPath := filepath.Join(destDir, fmt.Sprintf("audio.%s", info.Ext))
-	if len(info.RequestedDownloads) > 0 {
-		audioPath = info.RequestedDownloads[0].Filepath
+	// Find the actual audio file - prefer WAV (requested format) over original
+	audioPath := filepath.Join(destDir, "audio.wav")
+	if _, err := os.Stat(audioPath); err != nil {
+		// WAV not found, try RequestedDownloads path
+		if len(info.RequestedDownloads) > 0 {
+			audioPath = info.RequestedDownloads[0].Filepath
+		} else {
+			// Fall back to glob
+			matches, _ := filepath.Glob(filepath.Join(destDir, "audio.*"))
+			if len(matches) > 0 {
+				audioPath = matches[0]
+			}
+		}
 	}
 
 	return &ports.DownloadResult{
