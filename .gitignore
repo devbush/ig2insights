@@ -22,3 +22,6 @@ coverage.html
 
 # Local config files
 *.local.yaml
+
+# Git worktrees
+.worktrees/
