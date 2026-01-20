@@ -206,3 +206,82 @@ func TestNewTranscriberCustomModelsDir(t *testing.T) {
 		t.Errorf("modelsDir = %s, want %s", tr.modelsDir, customDir)
 	}
 }
+
+func TestParseWhisperJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	tr := NewTranscriber(tmpDir)
+
+	jsonContent := `{
+        "transcription": [
+            {"timestamps": {"from": "00:00:00,000", "to": "00:00:02,500"}, "text": "Hello world"},
+            {"timestamps": {"from": "00:00:02,500", "to": "00:00:05,000"}, "text": "Test segment"}
+        ]
+    }`
+
+	jsonPath := filepath.Join(tmpDir, "test.json")
+	if err := os.WriteFile(jsonPath, []byte(jsonContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := tr.parseWhisperJSON(jsonPath, "small")
+	if err != nil {
+		t.Fatalf("parseWhisperJSON failed: %v", err)
+	}
+
+	if len(result.Segments) != 2 {
+		t.Errorf("expected 2 segments, got %d", len(result.Segments))
+	}
+
+	if result.Text != "Hello world Test segment" {
+		t.Errorf("expected combined text, got %q", result.Text)
+	}
+
+	if result.Model != "small" {
+		t.Errorf("expected model 'small', got %q", result.Model)
+	}
+
+	// Check first segment
+	if result.Segments[0].Start != 0.0 {
+		t.Errorf("segment[0].Start = %f, want 0.0", result.Segments[0].Start)
+	}
+	if result.Segments[0].End != 2.5 {
+		t.Errorf("segment[0].End = %f, want 2.5", result.Segments[0].End)
+	}
+	if result.Segments[0].Text != "Hello world" {
+		t.Errorf("segment[0].Text = %q, want 'Hello world'", result.Segments[0].Text)
+	}
+}
+
+func TestParseWhisperJSON_InvalidFile(t *testing.T) {
+	tmpDir := t.TempDir()
+	tr := NewTranscriber(tmpDir)
+
+	_, err := tr.parseWhisperJSON(filepath.Join(tmpDir, "nonexistent.json"), "small")
+	if err == nil {
+		t.Error("expected error for non-existent file")
+	}
+}
+
+func TestParseWhisperJSON_InvalidJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	tr := NewTranscriber(tmpDir)
+
+	jsonPath := filepath.Join(tmpDir, "invalid.json")
+	if err := os.WriteFile(jsonPath, []byte("not valid json"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := tr.parseWhisperJSON(jsonPath, "small")
+	if err == nil {
+		t.Error("expected error for invalid JSON")
+	}
+}
+
+func TestFindWhisperBinary_NotFound(t *testing.T) {
+	tr := NewTranscriber(t.TempDir())
+	// This test will return "" if whisper is not installed, which is expected behavior
+	path := tr.findWhisperBinary()
+	// We can't assert much here since it depends on system state
+	// Just verify it doesn't panic
+	_ = path
+}
