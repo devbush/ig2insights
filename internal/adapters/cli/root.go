@@ -209,44 +209,66 @@ func runTranscribe(input string) error {
 		return fmt.Errorf("failed to initialize: %w", err)
 	}
 
-	// Parse input
 	reel, err := domain.ParseReelInput(input)
 	if err != nil {
 		return err
 	}
 
-	// Check dependencies
+	// Build step list based on what we're doing
+	steps := []string{"Checking dependencies", "Downloading video", "Extracting audio", "Transcribing"}
+
+	videoStepIdx := -1
+	thumbStepIdx := -1
+
+	if videoFlag {
+		videoStepIdx = len(steps)
+		steps = append(steps, "Saving video")
+	}
+	if thumbnailFlag {
+		thumbStepIdx = len(steps)
+		steps = append(steps, "Downloading thumbnail")
+	}
+
+	progress := tui.NewProgressDisplay(steps, quietFlag)
+
+	// Step 1: Check dependencies
+	progress.StartStep(0)
+
 	if !app.Downloader.IsAvailable() {
-		fmt.Println("yt-dlp not found. Installing...")
-		if err := app.Downloader.Install(context.Background(), printProgress); err != nil {
+		if err := app.Downloader.Install(context.Background(), func(d, t int64) {
+			progress.UpdateProgress(0, d, t)
+		}); err != nil {
+			progress.FailStep(0, err.Error())
 			return fmt.Errorf("failed to install yt-dlp: %w", err)
 		}
-		fmt.Println("\n✓ yt-dlp installed")
 	}
 
 	if !app.Transcriber.IsAvailable() {
 		instructions := app.Transcriber.InstallationInstructions()
 		if instructions != "" {
+			progress.FailStep(0, "whisper.cpp not found")
 			return errors.New(instructions)
 		}
-		fmt.Println("whisper.cpp not found. Installing...")
-		if err := app.Transcriber.Install(context.Background(), printProgress); err != nil {
+		if err := app.Transcriber.Install(context.Background(), func(d, t int64) {
+			progress.UpdateProgress(0, d, t)
+		}); err != nil {
+			progress.FailStep(0, err.Error())
 			return fmt.Errorf("failed to install whisper.cpp: %w", err)
 		}
-		fmt.Println("\n✓ whisper.cpp installed")
 	}
 
-	// Check ffmpeg
 	if !app.Downloader.IsFFmpegAvailable() {
 		instructions := app.Downloader.FFmpegInstructions()
 		if instructions != "" {
+			progress.FailStep(0, "ffmpeg not found")
 			return errors.New(instructions)
 		}
-		fmt.Println("ffmpeg not found. Installing...")
-		if err := app.Downloader.InstallFFmpeg(context.Background(), printProgress); err != nil {
+		if err := app.Downloader.InstallFFmpeg(context.Background(), func(d, t int64) {
+			progress.UpdateProgress(0, d, t)
+		}); err != nil {
+			progress.FailStep(0, err.Error())
 			return fmt.Errorf("failed to install ffmpeg: %w", err)
 		}
-		fmt.Println("\n✓ ffmpeg installed")
 	}
 
 	model := modelFlag
@@ -255,33 +277,94 @@ func runTranscribe(input string) error {
 	}
 
 	if !app.Transcriber.IsModelDownloaded(model) {
-		fmt.Printf("Model '%s' not found. Downloading...\n", model)
-		if err := app.Transcriber.DownloadModel(context.Background(), model, printProgress); err != nil {
+		if err := app.Transcriber.DownloadModel(context.Background(), model, func(d, t int64) {
+			progress.UpdateProgress(0, d, t)
+		}); err != nil {
+			progress.FailStep(0, err.Error())
 			return fmt.Errorf("failed to download model: %w", err)
 		}
-		fmt.Println("\n✓ Model downloaded")
 	}
+	progress.CompleteStep(0)
 
-	// Transcribe
-	if !quietFlag {
-		fmt.Printf("Transcribing %s...\n", reel.ID)
-	}
+	// Start spinner for indeterminate steps
+	spinnerDone := progress.StartSpinner()
+
+	// Step 2: Download video (starts at step index 1)
+	progress.StartStep(1)
 
 	ctx := context.Background()
 	result, err := app.TranscribeSvc.Transcribe(ctx, reel.ID, application.TranscribeOptions{
-		Model:   model,
-		NoCache: noCacheFlag,
+		Model:    model,
+		NoCache:  noCacheFlag,
+		Language: languageFlag,
 	})
+
 	if err != nil {
+		close(spinnerDone)
+		progress.FailStep(1, err.Error())
 		return err
 	}
 
-	if result.FromCache && !quietFlag {
-		fmt.Println("(from cache)")
+	// Mark transcription steps complete
+	progress.CompleteStep(1) // Download
+	progress.CompleteStep(2) // Extract
+	progress.CompleteStep(3) // Transcribe
+
+	// Determine output directory
+	outputDir := downloadDirFlag
+	if outputDir == "" {
+		if outputFlag != "" {
+			outputDir = filepath.Dir(outputFlag)
+		} else {
+			outputDir = "."
+		}
 	}
 
-	// Output
-	return outputResult(result)
+	outputs := make(map[string]string)
+
+	// Step: Save video (if requested)
+	if videoFlag && videoStepIdx >= 0 {
+		progress.StartStep(videoStepIdx)
+		videoPath := filepath.Join(outputDir, reel.ID+".mp4")
+		if err := app.Downloader.DownloadVideo(ctx, reel.ID, videoPath); err != nil {
+			progress.FailStep(videoStepIdx, err.Error())
+			// Non-fatal, continue
+		} else {
+			progress.CompleteStep(videoStepIdx)
+			outputs["Video"] = videoPath
+		}
+	}
+
+	// Step: Download thumbnail (if requested)
+	if thumbnailFlag && thumbStepIdx >= 0 {
+		progress.StartStep(thumbStepIdx)
+		thumbPath := filepath.Join(outputDir, reel.ID+".jpg")
+		if err := app.Downloader.DownloadThumbnail(ctx, reel.ID, thumbPath); err != nil {
+			progress.FailStep(thumbStepIdx, err.Error())
+			// Non-fatal, continue
+		} else {
+			progress.CompleteStep(thumbStepIdx)
+			outputs["Thumbnail"] = thumbPath
+		}
+	}
+
+	// Stop spinner
+	close(spinnerDone)
+
+	// Output transcript
+	if err := outputResult(result); err != nil {
+		return err
+	}
+
+	if outputFlag != "" {
+		outputs["Transcript"] = outputFlag
+	}
+
+	if !quietFlag && len(outputs) > 0 {
+		progress.Complete(outputs)
+	}
+
+	return nil
 }
 
 func printProgress(downloaded, total int64) {
