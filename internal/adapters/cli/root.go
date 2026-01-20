@@ -18,16 +18,16 @@ import (
 
 var (
 	// Global flags
-	formatFlag      string
-	modelFlag       string
-	cacheTTLFlag    string
-	noCacheFlag     bool
-	outputFlag      string
-	quietFlag       bool
-	languageFlag    string
-	videoFlag       bool
-	thumbnailFlag   bool
-	downloadDirFlag string
+	formatFlag   string
+	modelFlag    string
+	cacheTTLFlag string
+	noCacheFlag  bool
+	dirFlag      string
+	nameFlag     string
+	quietFlag    bool
+	languageFlag string
+	videoFlag    bool
+	thumbnailFlag bool
 )
 
 // NewRootCmd creates the root command
@@ -48,12 +48,12 @@ for an interactive menu.`,
 	rootCmd.PersistentFlags().StringVar(&modelFlag, "model", "small", "Whisper model: tiny, base, small, medium, large")
 	rootCmd.PersistentFlags().StringVar(&cacheTTLFlag, "cache-ttl", "7d", "Cache lifetime (e.g., 24h, 7d)")
 	rootCmd.PersistentFlags().BoolVar(&noCacheFlag, "no-cache", false, "Skip cache")
-	rootCmd.PersistentFlags().StringVarP(&outputFlag, "output", "o", "", "Output file path")
+	rootCmd.PersistentFlags().StringVarP(&dirFlag, "dir", "d", "", "Output directory (default: ./{reelID})")
+	rootCmd.PersistentFlags().StringVarP(&nameFlag, "name", "n", "", "Base filename for outputs (default: {reelID})")
 	rootCmd.PersistentFlags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress progress output")
 	rootCmd.PersistentFlags().StringVarP(&languageFlag, "language", "l", "auto", "Language code (auto, en, fr, es, etc.)")
 	rootCmd.PersistentFlags().BoolVar(&videoFlag, "video", false, "Download the original video file")
 	rootCmd.PersistentFlags().BoolVar(&thumbnailFlag, "thumbnail", false, "Download the video thumbnail")
-	rootCmd.PersistentFlags().StringVar(&downloadDirFlag, "download-dir", "", "Directory for downloaded assets (default: same as output)")
 
 	// Add subcommands
 	rootCmd.AddCommand(NewAccountCmd())
@@ -167,9 +167,18 @@ func runDownloadOnly(input string, video, thumbnail bool) error {
 	}
 
 	ctx := context.Background()
-	outputDir := downloadDirFlag
+	outputDir := dirFlag
 	if outputDir == "" {
-		outputDir = "."
+		outputDir = reel.ID // Default to ./{reelID}/
+	}
+	baseName := nameFlag
+	if baseName == "" {
+		baseName = reel.ID // Default to {reelID}
+	}
+
+	// Create output directory
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
 	// Check cache for existing assets
@@ -182,15 +191,19 @@ func runDownloadOnly(input string, video, thumbnail bool) error {
 	var cachedVideoPath, cachedThumbnailPath string
 
 	if video {
-		destPath := filepath.Join(outputDir, reel.ID+".mp4")
+		destPath := filepath.Join(outputDir, baseName+".mp4")
 		if hasVideo {
-			fmt.Printf("Copying video from cache to %s...\n", destPath)
+			if !quietFlag {
+				fmt.Printf("Copying video from cache to %s...\n", destPath)
+			}
 			if err := copyFile(cached.VideoPath, destPath); err != nil {
 				return fmt.Errorf("failed to copy video: %w", err)
 			}
 			cachedVideoPath = cached.VideoPath
 		} else {
-			fmt.Printf("Downloading video to %s...\n", destPath)
+			if !quietFlag {
+				fmt.Printf("Downloading video to %s...\n", destPath)
+			}
 			// Download to cache first, then copy to output
 			cachePath := filepath.Join(cacheDir, "video.mp4")
 			if err := os.MkdirAll(cacheDir, 0755); err != nil {
@@ -205,19 +218,25 @@ func runDownloadOnly(input string, video, thumbnail bool) error {
 			cachedVideoPath = cachePath
 			cacheUpdated = true
 		}
-		fmt.Println("✓ Video downloaded")
+		if !quietFlag {
+			fmt.Println("✓ Video downloaded")
+		}
 	}
 
 	if thumbnail {
-		destPath := filepath.Join(outputDir, reel.ID+".jpg")
+		destPath := filepath.Join(outputDir, baseName+".jpg")
 		if hasThumbnail {
-			fmt.Printf("Copying thumbnail from cache to %s...\n", destPath)
+			if !quietFlag {
+				fmt.Printf("Copying thumbnail from cache to %s...\n", destPath)
+			}
 			if err := copyFile(cached.ThumbnailPath, destPath); err != nil {
 				return fmt.Errorf("failed to copy thumbnail: %w", err)
 			}
 			cachedThumbnailPath = cached.ThumbnailPath
 		} else {
-			fmt.Printf("Downloading thumbnail to %s...\n", destPath)
+			if !quietFlag {
+				fmt.Printf("Downloading thumbnail to %s...\n", destPath)
+			}
 			// Download to cache first, then copy to output
 			cachePath := filepath.Join(cacheDir, "thumbnail.jpg")
 			if err := os.MkdirAll(cacheDir, 0755); err != nil {
@@ -232,7 +251,9 @@ func runDownloadOnly(input string, video, thumbnail bool) error {
 			cachedThumbnailPath = cachePath
 			cacheUpdated = true
 		}
-		fmt.Println("✓ Thumbnail downloaded")
+		if !quietFlag {
+			fmt.Println("✓ Thumbnail downloaded")
+		}
 	}
 
 	// Update cache if we downloaded new assets
@@ -429,14 +450,20 @@ func runTranscribe(input string) error {
 		progress.CompleteStep(3) // Transcribe
 	}
 
-	// Determine output directory
-	outputDir := downloadDirFlag
+	// Determine output directory and base filename
+	outputDir := dirFlag
 	if outputDir == "" {
-		if outputFlag != "" {
-			outputDir = filepath.Dir(outputFlag)
-		} else {
-			outputDir = "."
-		}
+		outputDir = reel.ID // Default to ./{reelID}/
+	}
+	baseName := nameFlag
+	if baseName == "" {
+		baseName = reel.ID // Default to {reelID}
+	}
+
+	// Create output directory
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		close(spinnerDone)
+		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
 	outputs := make(map[string]string)
@@ -450,7 +477,7 @@ func runTranscribe(input string) error {
 			progress.StartStep(videoStepIdx)
 		}
 
-		videoPath := filepath.Join(outputDir, reel.ID+".mp4")
+		videoPath := filepath.Join(outputDir, baseName+".mp4")
 		if result.VideoPath != "" {
 			if err := copyFile(result.VideoPath, videoPath); err != nil {
 				progress.FailStep(videoStepIdx, err.Error())
@@ -471,7 +498,7 @@ func runTranscribe(input string) error {
 			progress.StartStep(thumbStepIdx)
 		}
 
-		thumbPath := filepath.Join(outputDir, reel.ID+".jpg")
+		thumbPath := filepath.Join(outputDir, baseName+".jpg")
 		if result.ThumbnailPath != "" {
 			if err := copyFile(result.ThumbnailPath, thumbPath); err != nil {
 				progress.FailStep(thumbStepIdx, err.Error())
@@ -494,13 +521,11 @@ func runTranscribe(input string) error {
 	close(spinnerDone)
 
 	// Output transcript
-	if err := outputResult(result); err != nil {
+	transcriptPath, err := outputResult(result, outputDir, baseName)
+	if err != nil {
 		return err
 	}
-
-	if outputFlag != "" {
-		outputs["Transcript"] = outputFlag
-	}
+	outputs["Transcript"] = transcriptPath
 
 	if !quietFlag && len(outputs) > 0 {
 		progress.Complete(outputs)
@@ -519,18 +544,21 @@ func printProgress(downloaded, total int64) {
 	}
 }
 
-func outputResult(result *application.TranscribeResult) error {
+func outputResult(result *application.TranscribeResult, outputDir, baseName string) (string, error) {
 	format := formatFlag
 	if format == "" {
 		format = "text"
 	}
 
 	var output string
+	var ext string
 	switch format {
 	case "text":
 		output = result.Transcript.ToText()
+		ext = "txt"
 	case "srt":
 		output = result.Transcript.ToSRT()
+		ext = "srt"
 	case "json":
 		data := map[string]interface{}{
 			"reel":       result.Reel,
@@ -538,19 +566,26 @@ func outputResult(result *application.TranscribeResult) error {
 		}
 		jsonBytes, err := json.MarshalIndent(data, "", "  ")
 		if err != nil {
-			return err
+			return "", err
 		}
 		output = string(jsonBytes)
+		ext = "json"
 	default:
-		return fmt.Errorf("unknown format: %s", format)
+		return "", fmt.Errorf("unknown format: %s", format)
 	}
 
-	if outputFlag != "" {
-		return os.WriteFile(outputFlag, []byte(output), 0644)
+	// Write to file
+	filePath := filepath.Join(outputDir, baseName+"."+ext)
+	if err := os.WriteFile(filePath, []byte(output), 0644); err != nil {
+		return "", err
 	}
 
-	fmt.Println(output)
-	return nil
+	// Also print to stdout (unless quiet)
+	if !quietFlag {
+		fmt.Println(output)
+	}
+
+	return filePath, nil
 }
 
 // fileExists checks if a file exists
