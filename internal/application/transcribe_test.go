@@ -66,6 +66,12 @@ func (m *mockDownloader) IsFFmpegAvailable() bool                               
 func (m *mockDownloader) GetFFmpegPath() string                                           { return "/usr/bin/ffmpeg" }
 func (m *mockDownloader) InstallFFmpeg(ctx context.Context, progress func(int64, int64)) error { return nil }
 func (m *mockDownloader) FFmpegInstructions() string                                      { return "" }
+func (m *mockDownloader) DownloadVideo(ctx context.Context, reelID string, destPath string) error {
+	return nil
+}
+func (m *mockDownloader) DownloadThumbnail(ctx context.Context, reelID string, destPath string) error {
+	return nil
+}
 
 type mockTranscriber struct {
 	modelDownloaded bool
@@ -223,3 +229,9 @@ func (m *mockDownloaderWithError) IsFFmpegAvailable() bool                      
 func (m *mockDownloaderWithError) GetFFmpegPath() string                                           { return "/usr/bin/ffmpeg" }
 func (m *mockDownloaderWithError) InstallFFmpeg(ctx context.Context, progress func(int64, int64)) error { return nil }
 func (m *mockDownloaderWithError) FFmpegInstructions() string                                      { return "" }
+func (m *mockDownloaderWithError) DownloadVideo(ctx context.Context, reelID string, destPath string) error {
+	return nil
+}
+func (m *mockDownloaderWithError) DownloadThumbnail(ctx context.Context, reelID string, destPath string) error {
+	return nil
+}
