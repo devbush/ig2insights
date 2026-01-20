@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/devbush/ig2insights/internal/adapters/cli/tui"
 	"github.com/devbush/ig2insights/internal/application"
 	"github.com/devbush/ig2insights/internal/domain"
 	"github.com/spf13/cobra"
@@ -62,9 +63,49 @@ func runRoot(cmd *cobra.Command, args []string) error {
 }
 
 func runInteractiveMenu() error {
-	// TODO: Implement with bubbletea
-	fmt.Println("Interactive menu not yet implemented")
-	fmt.Println("Usage: ig2insights <reel-url|reel-id>")
+	options := []tui.MenuOption{
+		{Label: "Transcribe a single reel", Value: "transcribe"},
+		{Label: "Browse an account's reels", Value: "account"},
+		{Label: "Manage cache", Value: "cache"},
+		{Label: "Settings", Value: "settings"},
+	}
+
+	selected, err := tui.RunMenu(options)
+	if err != nil {
+		return err
+	}
+
+	switch selected {
+	case "transcribe":
+		fmt.Print("Enter reel URL or ID: ")
+		var input string
+		fmt.Scanln(&input)
+		return runTranscribe(input)
+	case "account":
+		fmt.Print("Enter username: ")
+		var username string
+		fmt.Scanln(&username)
+		return runAccountInteractive(username)
+	case "cache":
+		return runCacheInteractive()
+	case "settings":
+		fmt.Println("Settings not yet implemented")
+	case "":
+		fmt.Println("Cancelled")
+	}
+
+	return nil
+}
+
+func runAccountInteractive(username string) error {
+	// TODO: Implement with BrowseService
+	fmt.Printf("Browsing %s...\n", username)
+	return nil
+}
+
+func runCacheInteractive() error {
+	// TODO: Implement cache management
+	fmt.Println("Cache management not yet implemented")
 	return nil
 }
 
