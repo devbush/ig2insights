@@ -82,7 +82,7 @@ func runInteractiveMenu() error {
 		{Label: "Transcribe a single reel", Value: "transcribe"},
 		// Note: "Browse an account's reels" hidden - Instagram blocking yt-dlp user page scraping
 		{Label: "Manage cache", Value: "cache"},
-		{Label: "Settings", Value: "settings"},
+		{Label: "Quit", Value: "quit"},
 	}
 
 	selected, err := tui.RunMenu(options)
@@ -100,10 +100,8 @@ func runInteractiveMenu() error {
 		return runAccountInteractive(username)
 	case "cache":
 		return runCacheInteractive()
-	case "settings":
-		fmt.Println("Settings not yet implemented")
-	case "":
-		fmt.Println("Cancelled")
+	case "quit", "":
+		// User selected quit or pressed Esc
 	}
 
 	return nil
