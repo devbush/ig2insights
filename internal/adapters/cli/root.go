@@ -60,6 +60,7 @@ for an interactive menu.`,
 
 	// Add subcommands
 	rootCmd.AddCommand(NewAccountCmd())
+	rootCmd.AddCommand(NewBatchCmd())
 	rootCmd.AddCommand(NewCacheCmd())
 	rootCmd.AddCommand(NewModelCmd())
 	rootCmd.AddCommand(NewDepsCmd())
