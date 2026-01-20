@@ -1,7 +1,9 @@
 package main
 
-import "fmt"
+import (
+	"github.com/devbush/ig2insights/internal/adapters/cli"
+)
 
 func main() {
-	fmt.Println("ig2insights")
+	cli.Execute()
 }
