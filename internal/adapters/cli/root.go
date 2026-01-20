@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/devbush/ig2insights/internal/adapters/cli/tui"
 	"github.com/devbush/ig2insights/internal/application"
@@ -171,22 +172,98 @@ func runDownloadOnly(input string, video, thumbnail bool) error {
 		outputDir = "."
 	}
 
+	// Check cache for existing assets
+	cached, _ := app.Cache.Get(ctx, reel.ID)
+	hasVideo := cached != nil && cached.VideoPath != "" && fileExists(cached.VideoPath)
+	hasThumbnail := cached != nil && cached.ThumbnailPath != "" && fileExists(cached.ThumbnailPath)
+
+	cacheDir := app.Cache.GetCacheDir(reel.ID)
+	cacheUpdated := false
+	var cachedVideoPath, cachedThumbnailPath string
+
 	if video {
 		destPath := filepath.Join(outputDir, reel.ID+".mp4")
-		fmt.Printf("Downloading video to %s...\n", destPath)
-		if err := app.Downloader.DownloadVideo(ctx, reel.ID, destPath); err != nil {
-			return fmt.Errorf("video download failed: %w", err)
+		if hasVideo {
+			fmt.Printf("Copying video from cache to %s...\n", destPath)
+			if err := copyFile(cached.VideoPath, destPath); err != nil {
+				return fmt.Errorf("failed to copy video: %w", err)
+			}
+			cachedVideoPath = cached.VideoPath
+		} else {
+			fmt.Printf("Downloading video to %s...\n", destPath)
+			// Download to cache first, then copy to output
+			cachePath := filepath.Join(cacheDir, "video.mp4")
+			if err := os.MkdirAll(cacheDir, 0755); err != nil {
+				return fmt.Errorf("failed to create cache dir: %w", err)
+			}
+			if err := app.Downloader.DownloadVideo(ctx, reel.ID, cachePath); err != nil {
+				return fmt.Errorf("video download failed: %w", err)
+			}
+			if err := copyFile(cachePath, destPath); err != nil {
+				return fmt.Errorf("failed to copy video: %w", err)
+			}
+			cachedVideoPath = cachePath
+			cacheUpdated = true
 		}
 		fmt.Println("✓ Video downloaded")
 	}
 
 	if thumbnail {
 		destPath := filepath.Join(outputDir, reel.ID+".jpg")
-		fmt.Printf("Downloading thumbnail to %s...\n", destPath)
-		if err := app.Downloader.DownloadThumbnail(ctx, reel.ID, destPath); err != nil {
-			return fmt.Errorf("thumbnail download failed: %w", err)
+		if hasThumbnail {
+			fmt.Printf("Copying thumbnail from cache to %s...\n", destPath)
+			if err := copyFile(cached.ThumbnailPath, destPath); err != nil {
+				return fmt.Errorf("failed to copy thumbnail: %w", err)
+			}
+			cachedThumbnailPath = cached.ThumbnailPath
+		} else {
+			fmt.Printf("Downloading thumbnail to %s...\n", destPath)
+			// Download to cache first, then copy to output
+			cachePath := filepath.Join(cacheDir, "thumbnail.jpg")
+			if err := os.MkdirAll(cacheDir, 0755); err != nil {
+				return fmt.Errorf("failed to create cache dir: %w", err)
+			}
+			if err := app.Downloader.DownloadThumbnail(ctx, reel.ID, cachePath); err != nil {
+				return fmt.Errorf("thumbnail download failed: %w", err)
+			}
+			if err := copyFile(cachePath, destPath); err != nil {
+				return fmt.Errorf("failed to copy thumbnail: %w", err)
+			}
+			cachedThumbnailPath = cachePath
+			cacheUpdated = true
 		}
 		fmt.Println("✓ Thumbnail downloaded")
+	}
+
+	// Update cache if we downloaded new assets
+	if cacheUpdated {
+		now := time.Now()
+		ttl, _ := time.ParseDuration(cacheTTLFlag)
+		if ttl == 0 {
+			ttl = 7 * 24 * time.Hour
+		}
+
+		cacheItem := &ports.CachedItem{
+			VideoPath:     cachedVideoPath,
+			ThumbnailPath: cachedThumbnailPath,
+			CreatedAt:     now,
+			ExpiresAt:     now.Add(ttl),
+		}
+
+		// Preserve existing cache data
+		if cached != nil {
+			cacheItem.Reel = cached.Reel
+			cacheItem.Transcript = cached.Transcript
+			if cacheItem.VideoPath == "" {
+				cacheItem.VideoPath = cached.VideoPath
+			}
+			if cacheItem.ThumbnailPath == "" {
+				cacheItem.ThumbnailPath = cached.ThumbnailPath
+			}
+			cacheItem.CreatedAt = cached.CreatedAt
+		}
+
+		_ = app.Cache.Set(ctx, reel.ID, cacheItem)
 	}
 
 	return nil
