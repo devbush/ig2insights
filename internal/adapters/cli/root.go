@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/devbush/ig2insights/internal/adapters/cli/tui"
 	"github.com/devbush/ig2insights/internal/application"
 	"github.com/devbush/ig2insights/internal/domain"
@@ -336,8 +337,179 @@ func runDownloadOnly(input string, audio, video, thumbnail bool) error {
 }
 
 func runAccountInteractive(username string) error {
-	// TODO: Implement with BrowseService
-	fmt.Printf("Browsing %s...\n", username)
+	app, err := GetApp()
+	if err != nil {
+		return err
+	}
+
+	ctx := context.Background()
+
+	// Step 1: Ask for sort order
+	sortOptions := []tui.MenuOption{
+		{Label: "Latest", Value: "latest"},
+		{Label: "Top (most viewed)", Value: "top"},
+	}
+	sortChoice, err := tui.RunMenu(sortOptions)
+	if err != nil {
+		return err
+	}
+	if sortChoice == "" {
+		return nil // Cancelled
+	}
+
+	currentSort := domain.SortLatest
+	if sortChoice == "top" {
+		currentSort = domain.SortMostViewed
+	}
+
+	// Step 2: Fetch initial reels
+	fmt.Printf("Fetching reels from @%s...\n", username)
+	const pageSize = 10
+	reels, err := app.BrowseSvc.ListReels(ctx, username, currentSort, pageSize)
+	if err != nil {
+		return fmt.Errorf("failed to fetch reels: %w", err)
+	}
+
+	if len(reels) == 0 {
+		fmt.Printf("No reels found for @%s\n", username)
+		return nil
+	}
+
+	hasMore := len(reels) == pageSize
+
+	// Step 3: Paginated selection loop
+	model := tui.NewReelSelectorModel(reels, currentSort, hasMore)
+
+	for {
+		p := tea.NewProgram(model)
+		finalModel, err := p.Run()
+		if err != nil {
+			return err
+		}
+		model = finalModel.(tui.ReelSelectorModel)
+
+		switch model.Action() {
+		case tui.ActionCancel:
+			return nil
+
+		case tui.ActionLoadMore:
+			fmt.Println("Loading more...")
+			currentCount := len(reels)
+			moreReels, err := app.BrowseSvc.ListReels(ctx, username, currentSort, pageSize+currentCount)
+			if err != nil {
+				fmt.Printf("Error loading more: %v\n", err)
+				continue
+			}
+			// Get only the new ones
+			if len(moreReels) > currentCount {
+				newReels := moreReels[currentCount:]
+				hasMore = len(moreReels) == pageSize+currentCount
+				model.AddReels(newReels, hasMore)
+				reels = moreReels
+			} else {
+				hasMore = false
+				model.AddReels(nil, false)
+			}
+
+		case tui.ActionChangeSort:
+			// Toggle sort
+			if currentSort == domain.SortLatest {
+				currentSort = domain.SortMostViewed
+			} else {
+				currentSort = domain.SortLatest
+			}
+			fmt.Printf("Fetching reels sorted by %s...\n", currentSort)
+			reels, err = app.BrowseSvc.ListReels(ctx, username, currentSort, pageSize)
+			if err != nil {
+				return fmt.Errorf("failed to fetch reels: %w", err)
+			}
+			hasMore = len(reels) == pageSize
+			model.ClearAndSetReels(reels, currentSort, hasMore)
+
+		case tui.ActionContinue:
+			selectedReels := model.SelectedReels()
+			if len(selectedReels) == 0 {
+				fmt.Println("No reels selected.")
+				return nil
+			}
+
+			// Step 4: Get output options
+			outputOpts, err := tui.RunOutputSelector(len(selectedReels))
+			if err != nil {
+				return err
+			}
+			if outputOpts == nil {
+				return nil // Cancelled
+			}
+
+			// Step 5: Process selected reels
+			return processSelectedReels(ctx, app, selectedReels, outputOpts)
+		}
+	}
+}
+
+func processSelectedReels(ctx context.Context, app *App, reels []*domain.Reel, opts *tui.OutputOptions) error {
+	total := len(reels)
+	var failed []string
+
+	for i, reel := range reels {
+		fmt.Printf("Processing %d/%d: %s...\n", i+1, total, reel.ID)
+
+		transcribeOpts := application.TranscribeOptions{
+			SaveAudio:     opts.Audio,
+			SaveVideo:     opts.Video,
+			SaveThumbnail: opts.Thumbnail,
+		}
+
+		result, err := app.TranscribeSvc.Transcribe(ctx, reel.ID, transcribeOpts)
+		if err != nil {
+			failed = append(failed, fmt.Sprintf("%s: %v", reel.ID, err))
+			continue
+		}
+
+		// Copy outputs to current directory
+		outputDir := "."
+		baseName := reel.ID
+
+		if opts.Transcript && result.Transcript != nil {
+			outPath := filepath.Join(outputDir, baseName+".txt")
+			if err := os.WriteFile(outPath, []byte(result.Transcript.Text), 0644); err != nil {
+				failed = append(failed, fmt.Sprintf("%s (transcript): %v", reel.ID, err))
+			}
+		}
+
+		if opts.Audio && result.AudioPath != "" {
+			outPath := filepath.Join(outputDir, baseName+".wav")
+			if err := copyFile(result.AudioPath, outPath); err != nil {
+				failed = append(failed, fmt.Sprintf("%s (audio): %v", reel.ID, err))
+			}
+		}
+
+		if opts.Video && result.VideoPath != "" {
+			outPath := filepath.Join(outputDir, baseName+".mp4")
+			if err := copyFile(result.VideoPath, outPath); err != nil {
+				failed = append(failed, fmt.Sprintf("%s (video): %v", reel.ID, err))
+			}
+		}
+
+		if opts.Thumbnail && result.ThumbnailPath != "" {
+			outPath := filepath.Join(outputDir, baseName+".jpg")
+			if err := copyFile(result.ThumbnailPath, outPath); err != nil {
+				failed = append(failed, fmt.Sprintf("%s (thumbnail): %v", reel.ID, err))
+			}
+		}
+	}
+
+	// Summary
+	succeeded := total - len(failed)
+	fmt.Printf("\nCompleted %d/%d reels.\n", succeeded, total)
+	if len(failed) > 0 {
+		fmt.Println("Failed:")
+		for _, f := range failed {
+			fmt.Printf("  - %s\n", f)
+		}
+	}
+
 	return nil
 }
 
