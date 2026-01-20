@@ -109,6 +109,10 @@ func TestTranscribeService_Transcribe(t *testing.T) {
 		t.Errorf("Transcript text = %s, want 'Hello world transcription'", result.Transcript.Text)
 	}
 
+	if result.FromCache {
+		t.Errorf("FromCache should be false for fresh transcription")
+	}
+
 	// Verify it was cached
 	cached, err := cache.Get(ctx, "test123")
 	if err != nil {
@@ -145,4 +149,69 @@ func TestTranscribeService_CacheHit(t *testing.T) {
 	if result.Transcript.Text != "Cached result" {
 		t.Errorf("Should return cached result, got: %s", result.Transcript.Text)
 	}
+
+	if !result.FromCache {
+		t.Errorf("FromCache should be true for cached result")
+	}
 }
+
+func TestTranscribeService_NoCacheBypass(t *testing.T) {
+	cache := newMockCache()
+	downloader := &mockDownloader{available: true}
+	transcriber := &mockTranscriber{modelDownloaded: true}
+
+	// Pre-populate cache with existing data
+	cache.Set(context.Background(), "cached123", &ports.CachedItem{
+		Reel: &domain.Reel{ID: "cached123"},
+		Transcript: &domain.Transcript{
+			Text: "Old cached result",
+		},
+		ExpiresAt: time.Now().Add(24 * time.Hour),
+	})
+
+	svc := NewTranscribeService(cache, downloader, transcriber, 24*time.Hour)
+
+	ctx := context.Background()
+	result, err := svc.Transcribe(ctx, "cached123", TranscribeOptions{
+		NoCache: true,
+	})
+
+	if err != nil {
+		t.Fatalf("Transcribe() error = %v", err)
+	}
+
+	// Should get fresh transcription, not cache
+	if result.Transcript.Text != "Hello world transcription" {
+		t.Errorf("Expected fresh transcription, got: %s", result.Transcript.Text)
+	}
+
+	if result.FromCache {
+		t.Errorf("FromCache should be false when NoCache is set")
+	}
+}
+
+func TestTranscribeService_DownloadError(t *testing.T) {
+	cache := newMockCache()
+	downloader := &mockDownloaderWithError{}
+	transcriber := &mockTranscriber{modelDownloaded: true}
+
+	svc := NewTranscribeService(cache, downloader, transcriber, 24*time.Hour)
+
+	ctx := context.Background()
+	_, err := svc.Transcribe(ctx, "test123", TranscribeOptions{})
+
+	if err == nil {
+		t.Error("Expected error from failed download")
+	}
+}
+
+type mockDownloaderWithError struct{}
+
+func (m *mockDownloaderWithError) Download(ctx context.Context, reelID string, destDir string) (*ports.DownloadResult, error) {
+	return nil, domain.ErrReelNotFound
+}
+
+func (m *mockDownloaderWithError) IsAvailable() bool                                               { return true }
+func (m *mockDownloaderWithError) GetBinaryPath() string                                           { return "/usr/bin/yt-dlp" }
+func (m *mockDownloaderWithError) Install(ctx context.Context, progress func(int64, int64)) error  { return nil }
+func (m *mockDownloaderWithError) Update(ctx context.Context) error                                { return nil }

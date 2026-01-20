@@ -89,9 +89,8 @@ func (s *TranscribeService) Transcribe(ctx context.Context, reelID string, opts 
 		ExpiresAt:  now.Add(s.cacheTTL),
 	}
 
-	if err := s.cache.Set(ctx, reelID, cacheItem); err != nil {
-		// Log but don't fail on cache error
-	}
+	// Cache result (failures are non-fatal)
+	_ = s.cache.Set(ctx, reelID, cacheItem)
 
 	return &TranscribeResult{
 		Reel:       downloadResult.Reel,
