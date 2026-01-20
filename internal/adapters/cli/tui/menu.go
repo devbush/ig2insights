@@ -20,6 +20,7 @@ type MenuOption struct {
 
 // MenuModel is the bubbletea model for the main menu
 type MenuModel struct {
+	title    string
 	options  []MenuOption
 	cursor   int
 	selected string
@@ -28,6 +29,15 @@ type MenuModel struct {
 // NewMenuModel creates a new menu
 func NewMenuModel(options []MenuOption) MenuModel {
 	return MenuModel{
+		title:   "What would you like to do?",
+		options: options,
+	}
+}
+
+// NewMenuModelWithTitle creates a new menu with custom title
+func NewMenuModelWithTitle(title string, options []MenuOption) MenuModel {
+	return MenuModel{
+		title:   title,
 		options: options,
 	}
 }
@@ -59,7 +69,7 @@ func (m MenuModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m MenuModel) View() string {
-	s := "? What would you like to do?\n\n"
+	s := fmt.Sprintf("? %s\n\n", m.title)
 
 	for i, opt := range m.options {
 		cursor := "  "
@@ -83,6 +93,19 @@ func (m MenuModel) Selected() string {
 // RunMenu displays the menu and returns the selection
 func RunMenu(options []MenuOption) (string, error) {
 	model := NewMenuModel(options)
+	p := tea.NewProgram(model)
+
+	finalModel, err := p.Run()
+	if err != nil {
+		return "", err
+	}
+
+	return finalModel.(MenuModel).Selected(), nil
+}
+
+// RunMenuWithTitle displays a menu with custom title
+func RunMenuWithTitle(title string, options []MenuOption) (string, error) {
+	model := NewMenuModelWithTitle(title, options)
 	p := tea.NewProgram(model)
 
 	finalModel, err := p.Run()

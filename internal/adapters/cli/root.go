@@ -349,7 +349,7 @@ func runAccountInteractive(username string) error {
 		{Label: "Latest", Value: "latest"},
 		{Label: "Top (most viewed)", Value: "top"},
 	}
-	sortChoice, err := tui.RunMenu(sortOptions)
+	sortChoice, err := tui.RunMenuWithTitle("Sort by:", sortOptions)
 	if err != nil {
 		return err
 	}
