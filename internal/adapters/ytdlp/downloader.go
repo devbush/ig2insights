@@ -21,7 +21,8 @@ import (
 
 // Downloader implements VideoDownloader and AccountFetcher using yt-dlp
 type Downloader struct {
-	binPath string
+	binPath    string
+	ffmpegPath string
 }
 
 // NewDownloader creates a new yt-dlp downloader
@@ -34,6 +35,20 @@ func binaryName() string {
 		return "yt-dlp.exe"
 	}
 	return "yt-dlp"
+}
+
+func ffmpegBinaryName() string {
+	if runtime.GOOS == "windows" {
+		return "ffmpeg.exe"
+	}
+	return "ffmpeg"
+}
+
+func ffprobeBinaryName() string {
+	if runtime.GOOS == "windows" {
+		return "ffprobe.exe"
+	}
+	return "ffprobe"
 }
 
 func buildReelURL(reelID string) string {

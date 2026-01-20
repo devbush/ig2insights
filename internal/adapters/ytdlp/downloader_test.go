@@ -252,3 +252,29 @@ func TestAccountFetcherInterface(t *testing.T) {
 		_ = d.ListReels
 	})
 }
+
+func TestFFmpegBinaryName(t *testing.T) {
+	name := ffmpegBinaryName()
+	if runtime.GOOS == "windows" {
+		if name != "ffmpeg.exe" {
+			t.Errorf("ffmpegBinaryName() = %q, want 'ffmpeg.exe'", name)
+		}
+	} else {
+		if name != "ffmpeg" {
+			t.Errorf("ffmpegBinaryName() = %q, want 'ffmpeg'", name)
+		}
+	}
+}
+
+func TestFFprobeBinaryName(t *testing.T) {
+	name := ffprobeBinaryName()
+	if runtime.GOOS == "windows" {
+		if name != "ffprobe.exe" {
+			t.Errorf("ffprobeBinaryName() = %q, want 'ffprobe.exe'", name)
+		}
+	} else {
+		if name != "ffprobe" {
+			t.Errorf("ffprobeBinaryName() = %q, want 'ffprobe'", name)
+		}
+	}
+}
