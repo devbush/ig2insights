@@ -17,6 +17,12 @@ type VideoDownloader interface {
 	// Download fetches a video by reel ID, returns path to downloaded file
 	Download(ctx context.Context, reelID string, destDir string) (*DownloadResult, error)
 
+	// DownloadVideo downloads the full video file (not just audio)
+	DownloadVideo(ctx context.Context, reelID string, destPath string) error
+
+	// DownloadThumbnail downloads the video thumbnail
+	DownloadThumbnail(ctx context.Context, reelID string, destPath string) error
+
 	// IsAvailable checks if the downloader is ready (yt-dlp installed)
 	IsAvailable() bool
 
