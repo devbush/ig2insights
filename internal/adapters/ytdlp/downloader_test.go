@@ -1,6 +1,8 @@
 package ytdlp
 
 import (
+	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -330,5 +332,19 @@ func TestFFmpegInstructions(t *testing.T) {
 		if !strings.Contains(instructions, "apt") && !strings.Contains(instructions, "dnf") {
 			t.Errorf("FFmpegInstructions() should mention apt or dnf, got %q", instructions)
 		}
+	}
+}
+
+func TestExtractFFmpegFrom7z_InvalidArchive(t *testing.T) {
+	tmpDir := t.TempDir()
+	d := NewDownloader()
+
+	// Create an invalid file
+	invalidPath := filepath.Join(tmpDir, "invalid.7z")
+	os.WriteFile(invalidPath, []byte("not a 7z file"), 0644)
+
+	err := d.extractFFmpegFrom7z(invalidPath, tmpDir)
+	if err == nil {
+		t.Error("extractFFmpegFrom7z() should fail on invalid archive")
 	}
 }

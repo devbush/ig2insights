@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/bodgit/sevenzip"
 	"github.com/devbush/ig2insights/internal/config"
 	"github.com/devbush/ig2insights/internal/domain"
 	"github.com/devbush/ig2insights/internal/ports"
@@ -437,6 +438,70 @@ func sortByViews(reels []*domain.Reel) {
 	sort.Slice(reels, func(i, j int) bool {
 		return reels[i].ViewCount > reels[j].ViewCount
 	})
+}
+
+func (d *Downloader) extractFFmpegFrom7z(archivePath, binDir string) error {
+	r, err := sevenzip.OpenReader(archivePath)
+	if err != nil {
+		return fmt.Errorf("failed to open 7z archive: %w", err)
+	}
+	defer r.Close()
+
+	// Files to extract (inside "ffmpeg-X.X.X-essentials_build/bin/")
+	targets := map[string]string{
+		"ffmpeg.exe":  ffmpegBinaryName(),
+		"ffprobe.exe": ffprobeBinaryName(),
+	}
+	extracted := make(map[string]bool)
+
+	for _, f := range r.File {
+		basename := filepath.Base(f.Name)
+		destName, needed := targets[basename]
+		if !needed {
+			continue
+		}
+
+		destPath := filepath.Join(binDir, destName)
+		if err := d.extractFileFrom7z(f, destPath); err != nil {
+			return fmt.Errorf("failed to extract %s: %w", basename, err)
+		}
+		extracted[basename] = true
+	}
+
+	// Verify ffmpeg was extracted (ffprobe is optional but expected)
+	if !extracted["ffmpeg.exe"] {
+		return fmt.Errorf("ffmpeg.exe not found in 7z archive")
+	}
+
+	return nil
+}
+
+func (d *Downloader) extractFileFrom7z(f *sevenzip.File, destPath string) error {
+	src, err := f.Open()
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	dst, err := os.Create(destPath)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		os.Remove(destPath)
+		return err
+	}
+
+	// Make executable on Unix
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(destPath, 0755); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // Ensure Downloader implements interfaces
