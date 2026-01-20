@@ -367,6 +367,7 @@ func runTranscribe(input string) error {
 	}
 
 	hasTranscript := cached != nil && cached.Transcript != nil
+	hasAudio := cached != nil && cached.AudioPath != "" && fileExists(cached.AudioPath)
 	hasVideo := cached != nil && cached.VideoPath != "" && fileExists(cached.VideoPath)
 	hasThumbnail := cached != nil && cached.ThumbnailPath != "" && fileExists(cached.ThumbnailPath)
 
@@ -385,9 +386,18 @@ func runTranscribe(input string) error {
 		steps = append(steps, "Transcribing")
 	}
 
+	audioStepIdx := -1
 	videoStepIdx := -1
 	thumbStepIdx := -1
 
+	if audioFlag {
+		audioStepIdx = len(steps)
+		if hasAudio {
+			steps = append(steps, "Saving audio (cached)")
+		} else {
+			steps = append(steps, "Saving audio")
+		}
+	}
 	if videoFlag {
 		videoStepIdx = len(steps)
 		if hasVideo {
@@ -478,6 +488,7 @@ func runTranscribe(input string) error {
 		Model:         model,
 		NoCache:       noCacheFlag,
 		Language:      languageFlag,
+		SaveAudio:     audioFlag,
 		SaveVideo:     videoFlag,
 		SaveThumbnail: thumbnailFlag,
 	})
@@ -512,6 +523,27 @@ func runTranscribe(input string) error {
 	}
 
 	outputs := make(map[string]string)
+
+	// Step: Save audio (if requested)
+	if audioFlag && audioStepIdx >= 0 {
+		if result.AudioFromCache {
+			progress.CompleteStep(audioStepIdx)
+		} else {
+			progress.StartStep(audioStepIdx)
+		}
+
+		audioPath := filepath.Join(outputDir, baseName+".wav")
+		if result.AudioPath != "" {
+			if err := copyFile(result.AudioPath, audioPath); err != nil {
+				progress.FailStep(audioStepIdx, err.Error())
+			} else {
+				progress.CompleteStep(audioStepIdx)
+				outputs["Audio"] = audioPath
+			}
+		} else {
+			progress.FailStep(audioStepIdx, "no audio available")
+		}
+	}
 
 	// Step: Save video (if requested)
 	if videoFlag && videoStepIdx >= 0 {
