@@ -1,6 +1,7 @@
 package whisper
 
 import (
+	"archive/zip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -326,6 +327,144 @@ func (t *Transcriber) InstallationInstructions() string {
 	default:
 		return "whisper.cpp not found. Build from source:\n  git clone https://github.com/ggerganov/whisper.cpp\n  cd whisper.cpp && make\n  sudo cp main /usr/local/bin/whisper"
 	}
+}
+
+func (t *Transcriber) Install(ctx context.Context, progress func(downloaded, total int64)) error {
+	downloadURL := t.getDownloadURL()
+	if downloadURL == "" {
+		return fmt.Errorf("no prebuilt whisper.cpp binary for %s.\n%s", runtime.GOOS, t.InstallationInstructions())
+	}
+
+	binDir := config.BinDir()
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		return err
+	}
+
+	// Download zip to temp file
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to download whisper.cpp: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to download whisper.cpp: HTTP %d", resp.StatusCode)
+	}
+
+	// Download to temp file
+	tmpFile, err := os.CreateTemp("", "whisper-*.zip")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmpFile.Name()
+	defer os.Remove(tmpPath)
+
+	total := resp.ContentLength
+	var downloaded int64
+
+	buf := make([]byte, 32*1024)
+	for {
+		select {
+		case <-ctx.Done():
+			tmpFile.Close()
+			return ctx.Err()
+		default:
+		}
+
+		n, err := resp.Body.Read(buf)
+		if n > 0 {
+			_, writeErr := tmpFile.Write(buf[:n])
+			if writeErr != nil {
+				tmpFile.Close()
+				return writeErr
+			}
+			downloaded += int64(n)
+			if progress != nil {
+				progress(downloaded, total)
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			tmpFile.Close()
+			return err
+		}
+	}
+	tmpFile.Close()
+
+	// Extract main.exe from zip and rename to whisper.exe
+	destPath := filepath.Join(binDir, whisperBinaryName())
+
+	// Track success to clean up destination binary on failure
+	success := false
+	defer func() {
+		if !success {
+			os.Remove(destPath)
+		}
+	}()
+
+	if err := t.extractMainFromZip(tmpPath, destPath); err != nil {
+		return err
+	}
+
+	t.binPath = destPath
+	success = true
+	return nil
+}
+
+func (t *Transcriber) extractMainFromZip(zipPath, destPath string) error {
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return fmt.Errorf("failed to open zip: %w", err)
+	}
+	defer r.Close()
+
+	// Look for main.exe in the zip
+	var mainFile *zip.File
+	for _, f := range r.File {
+		name := filepath.Base(f.Name)
+		if name == "main.exe" || name == "main" {
+			mainFile = f
+			break
+		}
+	}
+
+	if mainFile == nil {
+		return fmt.Errorf("main executable not found in whisper.cpp zip")
+	}
+
+	// Extract to destination
+	src, err := mainFile.Open()
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+
+	dst, err := os.Create(destPath)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		os.Remove(destPath)
+		return err
+	}
+
+	// Make executable on Unix
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(destPath, 0755); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // Ensure Transcriber implements interface

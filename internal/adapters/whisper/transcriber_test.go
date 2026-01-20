@@ -1,6 +1,7 @@
 package whisper
 
 import (
+	"archive/zip"
 	"context"
 	"os"
 	"path/filepath"
@@ -374,5 +375,82 @@ func TestInstallationInstructions(t *testing.T) {
 		if !strings.Contains(instructions, "git clone") {
 			t.Error("Linux instructions should mention git clone")
 		}
+	}
+}
+
+func TestInstall_NonWindows(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Skipping non-Windows test on Windows")
+	}
+
+	tr := NewTranscriber(t.TempDir())
+	err := tr.Install(context.Background(), nil)
+
+	if err == nil {
+		t.Error("Install() should return error on non-Windows")
+	}
+	if !strings.Contains(err.Error(), "no prebuilt") {
+		t.Errorf("Install() error should mention 'no prebuilt', got: %v", err)
+	}
+}
+
+func TestExtractMainFromZip(t *testing.T) {
+	tmpDir := t.TempDir()
+	tr := NewTranscriber(tmpDir)
+
+	// Create a test zip file with main.exe
+	zipPath := filepath.Join(tmpDir, "test.zip")
+	destPath := filepath.Join(tmpDir, "extracted.exe")
+
+	// Create zip
+	zipFile, err := os.Create(zipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zipWriter := zip.NewWriter(zipFile)
+
+	// Add main.exe to zip
+	w, err := zipWriter.Create("main.exe")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.Write([]byte("fake binary content"))
+	zipWriter.Close()
+	zipFile.Close()
+
+	// Extract
+	err = tr.extractMainFromZip(zipPath, destPath)
+	if err != nil {
+		t.Fatalf("extractMainFromZip() failed: %v", err)
+	}
+
+	// Verify file exists
+	content, err := os.ReadFile(destPath)
+	if err != nil {
+		t.Fatalf("failed to read extracted file: %v", err)
+	}
+	if string(content) != "fake binary content" {
+		t.Errorf("extracted content = %q, want 'fake binary content'", content)
+	}
+}
+
+func TestExtractMainFromZip_NotFound(t *testing.T) {
+	tmpDir := t.TempDir()
+	tr := NewTranscriber(tmpDir)
+
+	// Create a zip without main.exe
+	zipPath := filepath.Join(tmpDir, "test.zip")
+	destPath := filepath.Join(tmpDir, "extracted.exe")
+
+	zipFile, _ := os.Create(zipPath)
+	zipWriter := zip.NewWriter(zipFile)
+	w, _ := zipWriter.Create("other.txt")
+	w.Write([]byte("not the binary"))
+	zipWriter.Close()
+	zipFile.Close()
+
+	err := tr.extractMainFromZip(zipPath, destPath)
+	if err == nil {
+		t.Error("extractMainFromZip() should fail when main.exe not in zip")
 	}
 }
