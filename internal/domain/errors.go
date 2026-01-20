@@ -29,4 +29,7 @@ var (
 
 	// ErrFFmpegNotFound indicates ffmpeg is not installed
 	ErrFFmpegNotFound = errors.New("ffmpeg not found")
+
+	// ErrInstagramScrapingBlocked indicates Instagram is blocking user page scraping
+	ErrInstagramScrapingBlocked = errors.New("Instagram is blocking profile access - browse feature temporarily unavailable")
 )

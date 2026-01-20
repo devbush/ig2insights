@@ -12,12 +12,14 @@ var (
 )
 
 // NewAccountCmd creates the account subcommand
+// Note: Hidden because Instagram is blocking yt-dlp user page scraping
 func NewAccountCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "account <username|url>",
-		Short: "Browse and transcribe reels from an account",
-		Args:  cobra.MaximumNArgs(1),
-		RunE:  runAccount,
+		Use:    "account <username|url>",
+		Short:  "Browse and transcribe reels from an account",
+		Args:   cobra.MaximumNArgs(1),
+		RunE:   runAccount,
+		Hidden: true, // Hidden until yt-dlp fixes Instagram user page scraping
 	}
 
 	cmd.Flags().IntVar(&latestFlag, "latest", 0, "Transcribe N most recent reels")

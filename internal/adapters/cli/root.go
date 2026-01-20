@@ -80,7 +80,7 @@ func runRoot(cmd *cobra.Command, args []string) error {
 func runInteractiveMenu() error {
 	options := []tui.MenuOption{
 		{Label: "Transcribe a single reel", Value: "transcribe"},
-		{Label: "Browse an account's reels", Value: "account"},
+		// Note: "Browse an account's reels" hidden - Instagram blocking yt-dlp user page scraping
 		{Label: "Manage cache", Value: "cache"},
 		{Label: "Settings", Value: "settings"},
 	}
@@ -367,6 +367,12 @@ func runAccountInteractive(username string) error {
 	const pageSize = 10
 	reels, err := app.BrowseSvc.ListReels(ctx, username, currentSort, pageSize)
 	if err != nil {
+		if errors.Is(err, domain.ErrInstagramScrapingBlocked) {
+			fmt.Println("\nInstagram is currently blocking profile access.")
+			fmt.Println("This is a yt-dlp limitation - Instagram has restricted scraping of user pages.")
+			fmt.Println("\nWorkaround: Use the 'Transcribe a single reel' option with direct reel URLs instead.")
+			return nil
+		}
 		return fmt.Errorf("failed to fetch reels: %w", err)
 	}
 

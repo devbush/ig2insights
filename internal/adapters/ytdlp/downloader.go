@@ -409,6 +409,9 @@ func (d *Downloader) ListReels(ctx context.Context, username string, sort domain
 			if strings.Contains(stderr, "rate") || strings.Contains(stderr, "429") {
 				return nil, domain.ErrRateLimited
 			}
+			if strings.Contains(stderr, "Unable to extract data") || strings.Contains(stderr, "Unsupported URL") {
+				return nil, domain.ErrInstagramScrapingBlocked
+			}
 		}
 		return nil, fmt.Errorf("failed to list reels: %w", err)
 	}
