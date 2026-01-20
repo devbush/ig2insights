@@ -46,9 +46,9 @@ type mockDownloader struct {
 	available bool
 }
 
-func (m *mockDownloader) Download(ctx context.Context, reelID string, destDir string) (*ports.DownloadResult, error) {
+func (m *mockDownloader) DownloadAudio(ctx context.Context, reelID string, destDir string) (*ports.DownloadResult, error) {
 	return &ports.DownloadResult{
-		VideoPath: destDir + "/video.mp4",
+		AudioPath: destDir + "/audio.wav",
 		Reel: &domain.Reel{
 			ID:        reelID,
 			Title:     "Test Reel",
@@ -217,7 +217,7 @@ func TestTranscribeService_DownloadError(t *testing.T) {
 
 type mockDownloaderWithError struct{}
 
-func (m *mockDownloaderWithError) Download(ctx context.Context, reelID string, destDir string) (*ports.DownloadResult, error) {
+func (m *mockDownloaderWithError) DownloadAudio(ctx context.Context, reelID string, destDir string) (*ports.DownloadResult, error) {
 	return nil, domain.ErrReelNotFound
 }
 
@@ -241,10 +241,11 @@ func TestTranscribeService_PartialCache_TranscriptOnly(t *testing.T) {
 	downloader := &mockDownloader{available: true}
 	transcriber := &mockTranscriber{modelDownloaded: true}
 
-	// Pre-populate cache with transcript only (no video path)
+	// Pre-populate cache with transcript only (no audio or video)
 	cache.Set(context.Background(), "partial123", &ports.CachedItem{
 		Reel:       &domain.Reel{ID: "partial123", Title: "Cached Reel"},
 		Transcript: &domain.Transcript{Text: "Cached transcript"},
+		AudioPath:  "", // No audio cached
 		VideoPath:  "", // No video cached
 		ExpiresAt:  time.Now().Add(24 * time.Hour),
 	})
