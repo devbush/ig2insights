@@ -134,17 +134,24 @@ func (d *Downloader) Download(ctx context.Context, reelID string, destDir string
 		return nil, fmt.Errorf("yt-dlp not found")
 	}
 
+	// Check for ffmpeg (needed for audio extraction)
+	if !d.IsFFmpegAvailable() {
+		return nil, domain.ErrFFmpegNotFound
+	}
+
 	if err := os.MkdirAll(destDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create destination directory: %w", err)
 	}
 
 	url := buildReelURL(reelID)
-	outputTemplate := filepath.Join(destDir, "video.%(ext)s")
+	outputTemplate := filepath.Join(destDir, "audio.%(ext)s")
 
 	// Run yt-dlp with JSON output for metadata
 	args := []string{
 		"--no-warnings",
 		"--print-json",
+		"-x",                    // Extract audio
+		"--audio-format", "wav", // Convert to wav (whisper-compatible)
 		"-o", outputTemplate,
 		url,
 	}
@@ -179,8 +186,8 @@ func (d *Downloader) Download(ctx context.Context, reelID string, destDir string
 	}
 
 	if err := json.Unmarshal(output, &info); err != nil {
-		// Try to find the video file anyway
-		matches, _ := filepath.Glob(filepath.Join(destDir, "video.*"))
+		// Try to find the audio file anyway
+		matches, _ := filepath.Glob(filepath.Join(destDir, "audio.*"))
 		if len(matches) > 0 {
 			return &ports.DownloadResult{
 				VideoPath: matches[0],
@@ -193,13 +200,13 @@ func (d *Downloader) Download(ctx context.Context, reelID string, destDir string
 		return nil, fmt.Errorf("failed to parse yt-dlp output: %w", err)
 	}
 
-	videoPath := filepath.Join(destDir, fmt.Sprintf("video.%s", info.Ext))
+	audioPath := filepath.Join(destDir, fmt.Sprintf("audio.%s", info.Ext))
 	if len(info.RequestedDownloads) > 0 {
-		videoPath = info.RequestedDownloads[0].Filepath
+		audioPath = info.RequestedDownloads[0].Filepath
 	}
 
 	return &ports.DownloadResult{
-		VideoPath: videoPath,
+		VideoPath: audioPath,
 		Reel: &domain.Reel{
 			ID:              reelID,
 			URL:             url,
