@@ -18,15 +18,16 @@ import (
 
 var (
 	// Global flags
-	formatFlag   string
-	modelFlag    string
-	cacheTTLFlag string
-	noCacheFlag  bool
-	dirFlag      string
-	nameFlag     string
-	quietFlag    bool
-	languageFlag string
-	videoFlag    bool
+	formatFlag    string
+	modelFlag     string
+	cacheTTLFlag  string
+	noCacheFlag   bool
+	dirFlag       string
+	nameFlag      string
+	quietFlag     bool
+	languageFlag  string
+	audioFlag     bool
+	videoFlag     bool
 	thumbnailFlag bool
 )
 
@@ -52,6 +53,7 @@ for an interactive menu.`,
 	rootCmd.PersistentFlags().StringVarP(&nameFlag, "name", "n", "", "Base filename for outputs (default: {reelID})")
 	rootCmd.PersistentFlags().BoolVarP(&quietFlag, "quiet", "q", false, "Suppress progress output")
 	rootCmd.PersistentFlags().StringVarP(&languageFlag, "language", "l", "auto", "Language code (auto, en, fr, es, etc.)")
+	rootCmd.PersistentFlags().BoolVar(&audioFlag, "audio", false, "Download the audio file (WAV)")
 	rootCmd.PersistentFlags().BoolVar(&videoFlag, "video", false, "Download the original video file")
 	rootCmd.PersistentFlags().BoolVar(&thumbnailFlag, "thumbnail", false, "Download the video thumbnail")
 
