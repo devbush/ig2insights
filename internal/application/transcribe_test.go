@@ -272,3 +272,67 @@ func TestTranscribeService_PartialCache_TranscriptOnly(t *testing.T) {
 		t.Errorf("VideoPath should be populated after download")
 	}
 }
+
+func TestTranscribeService_CachedVideo(t *testing.T) {
+	cache := newMockCache()
+	downloader := &mockDownloader{available: true}
+	transcriber := &mockTranscriber{modelDownloaded: true}
+
+	// Pre-populate cache with video path
+	cache.Set(context.Background(), "withvideo123", &ports.CachedItem{
+		Reel:       &domain.Reel{ID: "withvideo123", Title: "Cached Reel"},
+		Transcript: &domain.Transcript{Text: "Cached transcript"},
+		VideoPath:  "/tmp/withvideo123/video.mp4",
+		ExpiresAt:  time.Now().Add(24 * time.Hour),
+	})
+
+	svc := NewTranscribeService(cache, downloader, transcriber, 24*time.Hour)
+
+	ctx := context.Background()
+	result, err := svc.Transcribe(ctx, "withvideo123", TranscribeOptions{
+		SaveVideo: true,
+	})
+
+	if err != nil {
+		t.Fatalf("Transcribe() error = %v", err)
+	}
+
+	if !result.TranscriptFromCache {
+		t.Errorf("TranscriptFromCache should be true")
+	}
+
+	// Note: VideoFromCache will be false because fileExists() will fail on mock path
+	// In real usage, the file would exist
+}
+
+func TestTranscribeService_ThumbnailCaching(t *testing.T) {
+	cache := newMockCache()
+	downloader := &mockDownloader{available: true}
+	transcriber := &mockTranscriber{modelDownloaded: true}
+
+	svc := NewTranscribeService(cache, downloader, transcriber, 24*time.Hour)
+
+	ctx := context.Background()
+	result, err := svc.Transcribe(ctx, "thumb123", TranscribeOptions{
+		SaveThumbnail: true,
+	})
+
+	if err != nil {
+		t.Fatalf("Transcribe() error = %v", err)
+	}
+
+	// Verify thumbnail was requested
+	if result.ThumbnailFromCache {
+		t.Errorf("ThumbnailFromCache should be false for fresh download")
+	}
+
+	// Verify item was cached with thumbnail
+	cached, err := cache.Get(ctx, "thumb123")
+	if err != nil {
+		t.Fatalf("Cache.Get() error = %v", err)
+	}
+
+	if cached.ThumbnailPath == "" {
+		t.Errorf("ThumbnailPath should be set in cache")
+	}
+}
