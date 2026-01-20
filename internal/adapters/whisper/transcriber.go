@@ -199,15 +199,17 @@ func (t *Transcriber) Transcribe(ctx context.Context, videoPath string, opts por
 	tmpDir := os.TempDir()
 	outputBase := filepath.Join(tmpDir, fmt.Sprintf("ig2insights_%d", time.Now().UnixNano()))
 
+	language := opts.Language
+	if language == "" {
+		language = "auto"
+	}
+
 	args := []string{
 		"-m", t.modelPath(model),
 		"-f", videoPath,
 		"-of", outputBase,
-		"-oj", // JSON output
-	}
-
-	if opts.Language != "" {
-		args = append(args, "-l", opts.Language)
+		"-oj",
+		"-l", language,
 	}
 
 	cmd := exec.CommandContext(ctx, whisperBin, args...)

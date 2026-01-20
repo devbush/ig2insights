@@ -10,9 +10,10 @@ import (
 
 // TranscribeOptions configures the transcription
 type TranscribeOptions struct {
-	Model   string
-	Format  string // text, srt, json
-	NoCache bool
+	Model    string
+	Format   string // text, srt, json
+	NoCache  bool
+	Language string // empty defaults to "auto"
 }
 
 // TranscribeResult contains the transcription result
@@ -72,8 +73,14 @@ func (s *TranscribeService) Transcribe(ctx context.Context, reelID string, opts 
 		model = "small"
 	}
 
+	language := opts.Language
+	if language == "" {
+		language = "auto"
+	}
+
 	transcript, err := s.transcriber.Transcribe(ctx, downloadResult.VideoPath, ports.TranscribeOpts{
-		Model: model,
+		Model:    model,
+		Language: language,
 	})
 	if err != nil {
 		return nil, err
