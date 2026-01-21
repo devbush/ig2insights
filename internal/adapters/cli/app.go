@@ -43,7 +43,7 @@ func NewApp() (*App, error) {
 	}
 
 	// Create adapters
-	cacheStore := cache.NewFileCache(config.CacheDir(), ttl)
+	cacheStore := cache.NewFileCache(config.CacheDir())
 	downloader := ytdlp.NewDownloader()
 	transcriber := whisper.NewTranscriber("")
 

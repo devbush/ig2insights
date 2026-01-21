@@ -3,33 +3,23 @@ package domain
 import "errors"
 
 var (
-	// ErrReelNotFound indicates the reel doesn't exist or is private
-	ErrReelNotFound = errors.New("reel not found or is private")
+	// Instagram content errors
+	ErrReelNotFound             = errors.New("reel not found or is private")
+	ErrAccountNotFound          = errors.New("account not found")
+	ErrInstagramScrapingBlocked = errors.New("Instagram is blocking profile access - browse feature temporarily unavailable")
 
-	// ErrAccountNotFound indicates the account doesn't exist
-	ErrAccountNotFound = errors.New("account not found")
-
-	// ErrRateLimited indicates Instagram rate limiting
-	ErrRateLimited = errors.New("rate limited by Instagram")
-
-	// ErrNetworkFailure indicates a network error
+	// Network and rate limiting errors
+	ErrRateLimited    = errors.New("rate limited by Instagram")
 	ErrNetworkFailure = errors.New("network failure")
 
-	// ErrTranscriptionFailed indicates transcription error
+	// Transcription errors
 	ErrTranscriptionFailed = errors.New("transcription failed")
+	ErrModelNotFound       = errors.New("model not found")
 
-	// ErrModelNotFound indicates the whisper model isn't downloaded
-	ErrModelNotFound = errors.New("model not found")
-
-	// ErrCacheExpired indicates cached item has expired
+	// Cache errors
 	ErrCacheExpired = errors.New("cache expired")
+	ErrCacheMiss    = errors.New("cache miss")
 
-	// ErrCacheMiss indicates item not in cache
-	ErrCacheMiss = errors.New("cache miss")
-
-	// ErrFFmpegNotFound indicates ffmpeg is not installed
+	// Dependency errors
 	ErrFFmpegNotFound = errors.New("ffmpeg not found")
-
-	// ErrInstagramScrapingBlocked indicates Instagram is blocking user page scraping
-	ErrInstagramScrapingBlocked = errors.New("Instagram is blocking profile access - browse feature temporarily unavailable")
 )

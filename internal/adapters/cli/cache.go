@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/devbush/ig2insights/internal/adapters/cli/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -44,7 +45,7 @@ func runCacheStatus(cmd *cobra.Command, args []string) error {
 	fmt.Println()
 	fmt.Println("Cache Statistics:")
 	fmt.Printf("  Items: %d\n", stats.ItemCount)
-	fmt.Printf("  Size:  %s\n", formatSize(stats.TotalSize))
+	fmt.Printf("  Size:  %s\n", tui.FormatSize(stats.TotalSize))
 	fmt.Printf("  TTL:   %s\n", app.Config.Defaults.CacheTTL)
 	fmt.Println()
 

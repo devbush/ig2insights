@@ -11,7 +11,7 @@ import (
 
 func TestFileCache_SetGet(t *testing.T) {
 	tmpDir := t.TempDir()
-	cache := NewFileCache(tmpDir, 24*time.Hour)
+	cache := NewFileCache(tmpDir)
 
 	ctx := context.Background()
 	item := &ports.CachedItem{
@@ -47,7 +47,7 @@ func TestFileCache_SetGet(t *testing.T) {
 
 func TestFileCache_GetMiss(t *testing.T) {
 	tmpDir := t.TempDir()
-	cache := NewFileCache(tmpDir, 24*time.Hour)
+	cache := NewFileCache(tmpDir)
 
 	ctx := context.Background()
 	_, err := cache.Get(ctx, "nonexistent")
@@ -59,7 +59,7 @@ func TestFileCache_GetMiss(t *testing.T) {
 
 func TestFileCache_GetExpired(t *testing.T) {
 	tmpDir := t.TempDir()
-	cache := NewFileCache(tmpDir, 24*time.Hour)
+	cache := NewFileCache(tmpDir)
 
 	ctx := context.Background()
 	item := &ports.CachedItem{
@@ -78,7 +78,7 @@ func TestFileCache_GetExpired(t *testing.T) {
 
 func TestFileCache_CleanExpired(t *testing.T) {
 	tmpDir := t.TempDir()
-	cache := NewFileCache(tmpDir, 1*time.Millisecond)
+	cache := NewFileCache(tmpDir)
 
 	ctx := context.Background()
 

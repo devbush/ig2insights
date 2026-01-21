@@ -10,6 +10,11 @@ import (
 	"github.com/devbush/ig2insights/internal/ports"
 )
 
+const (
+	defaultModel    = "small"
+	defaultLanguage = "auto"
+)
+
 // TranscribeOptions configures the transcription
 type TranscribeOptions struct {
 	Model         string
@@ -60,137 +65,194 @@ func NewTranscribeService(
 	}
 }
 
+// cacheState tracks what assets are available from cache
+type cacheState struct {
+	item         *ports.CachedItem
+	hasTranscript bool
+	hasAudio      bool
+	hasVideo      bool
+	hasThumbnail  bool
+}
+
 // Transcribe processes a reel and returns its transcript
 func (s *TranscribeService) Transcribe(ctx context.Context, reelID string, opts TranscribeOptions) (*TranscribeResult, error) {
-	result := &TranscribeResult{}
-
-	// Try to get cached data first
-	var cached *ports.CachedItem
-	if !opts.NoCache {
-		var err error
-		cached, err = s.cache.Get(ctx, reelID)
-		if err != nil {
-			cached = nil // Treat errors as cache miss
-		}
-	}
-
-	// Determine what we have cached vs what we need
 	cacheDir := s.cache.GetCacheDir(reelID)
+	cache := s.loadCacheState(ctx, reelID, opts.NoCache)
 
-	hasTranscript := cached != nil && cached.Transcript != nil
-	hasAudio := cached != nil && cached.AudioPath != "" && fileExists(cached.AudioPath)
-	hasVideo := cached != nil && cached.VideoPath != "" && fileExists(cached.VideoPath)
-	hasThumbnail := cached != nil && cached.ThumbnailPath != "" && fileExists(cached.ThumbnailPath)
-
-	needTranscript := !hasTranscript
-	needAudio := (opts.SaveAudio || needTranscript) && !hasAudio
-	needVideo := opts.SaveVideo && !hasVideo
-	needThumbnail := opts.SaveThumbnail && !hasThumbnail
-
-	// Use cached reel metadata if available
-	var reel *domain.Reel
-	if cached != nil && cached.Reel != nil {
-		reel = cached.Reel
+	reel := s.reelFromCache(cache)
+	audioPath, reel, err := s.resolveAudio(ctx, reelID, cacheDir, opts, cache, reel)
+	if err != nil {
+		return nil, err
 	}
 
-	// Download audio if needed for transcription OR if user requested audio
-	var audioPath string
-	if needAudio {
-		downloadResult, err := s.downloader.DownloadAudio(ctx, reelID, cacheDir)
-		if err != nil {
-			return nil, err
-		}
-		audioPath = downloadResult.AudioPath
-		reel = downloadResult.Reel
-	} else if hasAudio {
-		audioPath = cached.AudioPath
+	transcript, err := s.resolveTranscript(ctx, audioPath, opts, cache)
+	if err != nil {
+		return nil, err
 	}
 
-	// Transcribe if needed
-	var transcript *domain.Transcript
-	if needTranscript {
-		model := opts.Model
-		if model == "" {
-			model = "small"
-		}
+	videoPath := s.resolveVideo(ctx, reelID, cacheDir, opts, cache)
+	thumbnailPath := s.resolveThumbnail(ctx, reelID, cacheDir, opts, cache)
 
-		language := opts.Language
-		if language == "" {
-			language = "auto"
-		}
+	s.updateCache(ctx, reelID, reel, transcript, audioPath, videoPath, thumbnailPath, cache)
 
-		var err error
-		transcript, err = s.transcriber.Transcribe(ctx, audioPath, ports.TranscribeOpts{
-			Model:    model,
-			Language: language,
-		})
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		transcript = cached.Transcript
+	return &TranscribeResult{
+		Reel:                reel,
+		Transcript:          transcript,
+		AudioPath:           audioPath,
+		VideoPath:           videoPath,
+		ThumbnailPath:       thumbnailPath,
+		TranscriptFromCache: cache.hasTranscript,
+		AudioFromCache:      cache.hasAudio && (opts.SaveAudio || !cache.hasTranscript),
+		VideoFromCache:      cache.hasVideo && opts.SaveVideo,
+		ThumbnailFromCache:  cache.hasThumbnail && opts.SaveThumbnail,
+	}, nil
+}
+
+func (s *TranscribeService) loadCacheState(ctx context.Context, reelID string, noCache bool) cacheState {
+	if noCache {
+		return cacheState{}
 	}
 
-	// Download video if needed (separate from audio)
-	var videoPath string
-	if needVideo {
-		if err := os.MkdirAll(cacheDir, 0755); err != nil {
-			return nil, err
-		}
-		vidPath := filepath.Join(cacheDir, "video.mp4")
-		if err := s.downloader.DownloadVideo(ctx, reelID, vidPath); err != nil {
-			// Non-fatal - continue without video
-		} else {
-			videoPath = vidPath
-		}
-	} else if hasVideo {
-		videoPath = cached.VideoPath
+	item, err := s.cache.Get(ctx, reelID)
+	if err != nil || item == nil {
+		return cacheState{}
 	}
 
-	// Download thumbnail if needed
-	var thumbnailPath string
-	if needThumbnail {
-		thumbPath := filepath.Join(cacheDir, "thumbnail.jpg")
-		if err := s.downloader.DownloadThumbnail(ctx, reelID, thumbPath); err != nil {
-			// Non-fatal - continue without thumbnail
-		} else {
-			thumbnailPath = thumbPath
+	return cacheState{
+		item:          item,
+		hasTranscript: item.Transcript != nil,
+		hasAudio:      item.AudioPath != "" && fileExists(item.AudioPath),
+		hasVideo:      item.VideoPath != "" && fileExists(item.VideoPath),
+		hasThumbnail:  item.ThumbnailPath != "" && fileExists(item.ThumbnailPath),
+	}
+}
+
+func (s *TranscribeService) reelFromCache(cache cacheState) *domain.Reel {
+	if cache.item != nil && cache.item.Reel != nil {
+		return cache.item.Reel
+	}
+	return nil
+}
+
+func (s *TranscribeService) resolveAudio(
+	ctx context.Context,
+	reelID, cacheDir string,
+	opts TranscribeOptions,
+	cache cacheState,
+	reel *domain.Reel,
+) (string, *domain.Reel, error) {
+	needTranscript := !cache.hasTranscript
+	needAudio := (opts.SaveAudio || needTranscript) && !cache.hasAudio
+
+	if !needAudio {
+		if cache.hasAudio {
+			return cache.item.AudioPath, reel, nil
 		}
-	} else if hasThumbnail {
-		thumbnailPath = cached.ThumbnailPath
+		return "", reel, nil
 	}
 
-	// Update cache with any new data
+	result, err := s.downloader.DownloadAudio(ctx, reelID, cacheDir)
+	if err != nil {
+		return "", nil, err
+	}
+	return result.AudioPath, result.Reel, nil
+}
+
+func (s *TranscribeService) resolveTranscript(
+	ctx context.Context,
+	audioPath string,
+	opts TranscribeOptions,
+	cache cacheState,
+) (*domain.Transcript, error) {
+	if cache.hasTranscript {
+		return cache.item.Transcript, nil
+	}
+
+	model := opts.Model
+	if model == "" {
+		model = defaultModel
+	}
+
+	language := opts.Language
+	if language == "" {
+		language = defaultLanguage
+	}
+
+	return s.transcriber.Transcribe(ctx, audioPath, ports.TranscribeOpts{
+		Model:    model,
+		Language: language,
+	})
+}
+
+func (s *TranscribeService) resolveVideo(
+	ctx context.Context,
+	reelID, cacheDir string,
+	opts TranscribeOptions,
+	cache cacheState,
+) string {
+	if !opts.SaveVideo {
+		return ""
+	}
+
+	if cache.hasVideo {
+		return cache.item.VideoPath
+	}
+
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		return ""
+	}
+
+	videoPath := filepath.Join(cacheDir, "video.mp4")
+	if err := s.downloader.DownloadVideo(ctx, reelID, videoPath); err != nil {
+		return ""
+	}
+	return videoPath
+}
+
+func (s *TranscribeService) resolveThumbnail(
+	ctx context.Context,
+	reelID, cacheDir string,
+	opts TranscribeOptions,
+	cache cacheState,
+) string {
+	if !opts.SaveThumbnail {
+		return ""
+	}
+
+	if cache.hasThumbnail {
+		return cache.item.ThumbnailPath
+	}
+
+	thumbnailPath := filepath.Join(cacheDir, "thumbnail.jpg")
+	if err := s.downloader.DownloadThumbnail(ctx, reelID, thumbnailPath); err != nil {
+		return ""
+	}
+	return thumbnailPath
+}
+
+func (s *TranscribeService) updateCache(
+	ctx context.Context,
+	reelID string,
+	reel *domain.Reel,
+	transcript *domain.Transcript,
+	audioPath, videoPath, thumbnailPath string,
+	cache cacheState,
+) {
 	now := time.Now()
-	cacheItem := &ports.CachedItem{
+	createdAt := now
+	if cache.item != nil {
+		createdAt = cache.item.CreatedAt
+	}
+
+	_ = s.cache.Set(ctx, reelID, &ports.CachedItem{
 		Reel:          reel,
 		Transcript:    transcript,
 		AudioPath:     audioPath,
 		VideoPath:     videoPath,
 		ThumbnailPath: thumbnailPath,
-		CreatedAt:     now,
+		CreatedAt:     createdAt,
 		ExpiresAt:     now.Add(s.cacheTTL),
-	}
-
-	// Preserve original timestamps if we had cached data
-	if cached != nil {
-		cacheItem.CreatedAt = cached.CreatedAt
-	}
-
-	_ = s.cache.Set(ctx, reelID, cacheItem)
-
-	// Build result
-	result.Reel = reel
-	result.Transcript = transcript
-	result.AudioPath = audioPath
-	result.VideoPath = videoPath
-	result.ThumbnailPath = thumbnailPath
-	result.TranscriptFromCache = hasTranscript
-	result.AudioFromCache = hasAudio && (opts.SaveAudio || needTranscript)
-	result.VideoFromCache = hasVideo && opts.SaveVideo
-	result.ThumbnailFromCache = hasThumbnail && opts.SaveThumbnail
-
-	return result, nil
+	})
 }
 
 // fileExists checks if a file exists at the given path

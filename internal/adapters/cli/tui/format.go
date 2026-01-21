@@ -7,6 +7,28 @@ import (
 	"github.com/devbush/ig2insights/internal/domain"
 )
 
+// Byte size constants for formatting
+const (
+	KB = 1024
+	MB = KB * 1024
+	GB = MB * 1024
+)
+
+// FormatSize formats a byte count as a human-readable string
+// Examples: 1024 -> "1 KB", 1536000 -> "1.5 MB", 3221225472 -> "3.0 GB"
+func FormatSize(bytes int64) string {
+	switch {
+	case bytes >= GB:
+		return fmt.Sprintf("%.1f GB", float64(bytes)/GB)
+	case bytes >= MB:
+		return fmt.Sprintf("%.0f MB", float64(bytes)/MB)
+	case bytes >= KB:
+		return fmt.Sprintf("%.0f KB", float64(bytes)/KB)
+	default:
+		return fmt.Sprintf("%d B", bytes)
+	}
+}
+
 // FormatCount formats a number with K/M suffix
 // Examples: 892 -> "892", 1234 -> "1.2K", 1500000 -> "1.5M"
 func FormatCount(count int64) string {

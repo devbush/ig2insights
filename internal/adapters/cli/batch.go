@@ -10,6 +10,7 @@ import (
 
 	"github.com/devbush/ig2insights/internal/adapters/cli/tui"
 	"github.com/devbush/ig2insights/internal/application"
+	"github.com/devbush/ig2insights/internal/domain"
 	"github.com/devbush/ig2insights/internal/ports"
 	"github.com/spf13/cobra"
 )
@@ -136,7 +137,16 @@ func processBatch(ctx context.Context, app *App, reelIDs []string, outputDir str
 func processOneReel(ctx context.Context, app *App, reelID string, outputDir string) BatchResult {
 	start := time.Now()
 
-	// Build transcribe options from global flags
+	makeResult := func(success bool, errMsg string, cached bool) BatchResult {
+		return BatchResult{
+			ReelID:   reelID,
+			Success:  success,
+			Error:    errMsg,
+			Duration: time.Since(start),
+			Cached:   cached,
+		}
+	}
+
 	opts := application.TranscribeOptions{
 		Model:         modelFlag,
 		NoCache:       noCacheFlag,
@@ -146,106 +156,44 @@ func processOneReel(ctx context.Context, app *App, reelID string, outputDir stri
 		SaveThumbnail: thumbnailFlag,
 	}
 
-	// Call transcription service
 	result, err := app.TranscribeSvc.Transcribe(ctx, reelID, opts)
 	if err != nil {
-		return BatchResult{
-			ReelID:   reelID,
-			Success:  false,
-			Error:    err.Error(),
-			Duration: time.Since(start),
-			Cached:   false,
-		}
+		return makeResult(false, err.Error(), false)
 	}
 
-	// Determine transcript format and extension
-	format := formatFlag
-	if format == "" {
-		format = "text"
-	}
-
-	var transcriptContent string
-	var ext string
-	switch format {
-	case "text":
-		transcriptContent = result.Transcript.ToText()
-		ext = "txt"
-	case "srt":
-		transcriptContent = result.Transcript.ToSRT()
-		ext = "srt"
-	case "json":
-		transcriptContent = result.Transcript.ToText() // Simplified for batch
-		ext = "txt"
-	default:
-		transcriptContent = result.Transcript.ToText()
-		ext = "txt"
-	}
-
-	// Write transcript to output directory
+	transcriptContent, ext := formatTranscript(result.Transcript)
 	transcriptPath := filepath.Join(outputDir, reelID+"."+ext)
 	if err := os.WriteFile(transcriptPath, []byte(transcriptContent), 0644); err != nil {
-		return BatchResult{
-			ReelID:   reelID,
-			Success:  false,
-			Error:    fmt.Sprintf("failed to write transcript: %v", err),
-			Duration: time.Since(start),
-			Cached:   result.TranscriptFromCache,
+		return makeResult(false, fmt.Sprintf("failed to write transcript: %v", err), result.TranscriptFromCache)
+	}
+
+	// Copy requested media files
+	mediaFiles := []struct {
+		enabled bool
+		srcPath string
+		dstName string
+		label   string
+	}{
+		{audioFlag, result.AudioPath, reelID + ".wav", "audio"},
+		{videoFlag, result.VideoPath, reelID + ".mp4", "video"},
+		{thumbnailFlag, result.ThumbnailPath, reelID + ".jpg", "thumbnail"},
+	}
+
+	for _, media := range mediaFiles {
+		if !media.enabled || media.srcPath == "" {
+			continue
+		}
+		dstPath := filepath.Join(outputDir, media.dstName)
+		if err := copyFile(media.srcPath, dstPath); err != nil {
+			return makeResult(false, fmt.Sprintf("failed to copy %s: %v", media.label, err), result.TranscriptFromCache)
 		}
 	}
 
-	// Copy audio if requested
-	if audioFlag && result.AudioPath != "" {
-		audioPath := filepath.Join(outputDir, reelID+".wav")
-		if err := copyFile(result.AudioPath, audioPath); err != nil {
-			return BatchResult{
-				ReelID:   reelID,
-				Success:  false,
-				Error:    fmt.Sprintf("failed to copy audio: %v", err),
-				Duration: time.Since(start),
-				Cached:   result.TranscriptFromCache,
-			}
-		}
-	}
-
-	// Copy video if requested
-	if videoFlag && result.VideoPath != "" {
-		videoPath := filepath.Join(outputDir, reelID+".mp4")
-		if err := copyFile(result.VideoPath, videoPath); err != nil {
-			return BatchResult{
-				ReelID:   reelID,
-				Success:  false,
-				Error:    fmt.Sprintf("failed to copy video: %v", err),
-				Duration: time.Since(start),
-				Cached:   result.TranscriptFromCache,
-			}
-		}
-	}
-
-	// Copy thumbnail if requested
-	if thumbnailFlag && result.ThumbnailPath != "" {
-		thumbPath := filepath.Join(outputDir, reelID+".jpg")
-		if err := copyFile(result.ThumbnailPath, thumbPath); err != nil {
-			return BatchResult{
-				ReelID:   reelID,
-				Success:  false,
-				Error:    fmt.Sprintf("failed to copy thumbnail: %v", err),
-				Duration: time.Since(start),
-				Cached:   result.TranscriptFromCache,
-			}
-		}
-	}
-
-	// If --no-save-media, clean up cache media files
 	if batchNoSaveMedia {
 		cleanupCacheMedia(ctx, app, reelID, result)
 	}
 
-	return BatchResult{
-		ReelID:   reelID,
-		Success:  true,
-		Duration: time.Since(start),
-		Cached:   result.TranscriptFromCache,
-	}
+	return makeResult(true, "", result.TranscriptFromCache)
 }
 
 // cleanupCacheMedia deletes audio/video/thumbnail from cache and updates cache entry
@@ -293,4 +241,12 @@ func countFailed(results []BatchResult) int {
 		}
 	}
 	return count
+}
+
+// formatTranscript returns the transcript content and file extension based on formatFlag
+func formatTranscript(transcript *domain.Transcript) (content, ext string) {
+	if formatFlag == "srt" {
+		return transcript.ToSRT(), "srt"
+	}
+	return transcript.ToText(), "txt"
 }

@@ -8,74 +8,34 @@ import (
 )
 
 // renderProgressBar creates a text progress bar like [=====>    ]
-// current=0, total=10, width=10 → [          ]
-// current=5, total=10, width=10 → [=====>    ]
-// current=10, total=10, width=10 → [==========]
-// current=3, total=10, width=10 → [==>       ]
 func renderProgressBar(current, total, width int) string {
-	if total <= 0 {
+	if total <= 0 || current == 0 {
 		return "[" + strings.Repeat(" ", width) + "]"
 	}
 
-	var bar strings.Builder
-	bar.WriteString("[")
-
 	if current >= total {
-		// Complete: all equals, no arrow
-		bar.WriteString(strings.Repeat("=", width))
-	} else if current == 0 {
-		// Empty: all spaces
-		bar.WriteString(strings.Repeat(" ", width))
-	} else {
-		// Partial progress: calculate arrow position
-		// Arrow position is where the progress "head" is
-		// For current=3, total=10, width=10: arrow at position 3 (1-indexed), so 2 equals before
-		// For current=5, total=10, width=10: arrow at position 6 (1-indexed), so 5 equals before
-		// Formula: arrowPos = round(current * width / total) with special handling for 50%
-
-		// Calculate the arrow position (1-indexed)
-		// Use float calculation and round
-		ratio := float64(current) / float64(total)
-		arrowPos := int(ratio*float64(width) + 0.5) // Round to nearest
-
-		// Ensure arrow is at least at position 1 and at most at position width
-		if arrowPos < 1 {
-			arrowPos = 1
-		}
-		if arrowPos > width {
-			arrowPos = width
-		}
-
-		// Number of equals is arrowPos - 1 (equals come before arrow)
-		// But for 50% (arrowPos=5), expected shows 5 equals, arrow at pos 6
-		// This suggests: when ratio >= 0.5, arrow comes AFTER the calculated position
-
-		equals := arrowPos - 1
-		if ratio >= 0.5 {
-			equals = arrowPos
-			arrowPos = arrowPos + 1
-		}
-
-		// Safety bounds
-		if equals < 0 {
-			equals = 0
-		}
-		if equals > width-1 {
-			equals = width - 1
-		}
-
-		spaces := width - equals - 1 // -1 for the arrow
-		if spaces < 0 {
-			spaces = 0
-		}
-
-		bar.WriteString(strings.Repeat("=", equals))
-		bar.WriteString(">")
-		bar.WriteString(strings.Repeat(" ", spaces))
+		return "[" + strings.Repeat("=", width) + "]"
 	}
 
-	bar.WriteString("]")
-	return bar.String()
+	// Calculate filled portion: for ratio r, filled = floor(r * width)
+	// This gives: 3/10 * 10 = 3 -> 2 equals + arrow, 5/10 * 10 = 5 -> 5 equals + arrow
+	filled := (current * width) / total
+	if filled < 1 {
+		filled = 1
+	}
+
+	equals := filled - 1
+	if current*2 >= total {
+		// At 50% or more, show filled equals before arrow
+		equals = filled
+	}
+
+	spaces := width - equals - 1
+	if spaces < 0 {
+		spaces = 0
+	}
+
+	return "[" + strings.Repeat("=", equals) + ">" + strings.Repeat(" ", spaces) + "]"
 }
 
 // BatchResult represents the result of processing a single reel

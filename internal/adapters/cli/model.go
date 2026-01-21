@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/devbush/ig2insights/internal/adapters/cli/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -60,7 +61,7 @@ func runModelList(cmd *cobra.Command, args []string) error {
 			status += " (default)"
 		}
 
-		size := formatSize(m.Size)
+		size := tui.FormatSize(m.Size)
 		fmt.Printf("  %-10s %-12s %s\n", m.Name, size, status)
 	}
 	fmt.Println()
@@ -86,7 +87,7 @@ func runModelDownload(cmd *cobra.Command, args []string) error {
 	err = app.Transcriber.DownloadModel(context.Background(), model, func(downloaded, total int64) {
 		if total > 0 {
 			pct := float64(downloaded) / float64(total) * 100
-			fmt.Printf("\rProgress: %.1f%% (%s / %s)", pct, formatSize(downloaded), formatSize(total))
+			fmt.Printf("\rProgress: %.1f%% (%s / %s)", pct, tui.FormatSize(downloaded), tui.FormatSize(total))
 		}
 	})
 
@@ -117,23 +118,4 @@ func runModelRemove(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("Model '%s' removed\n", model)
 	return nil
-}
-
-func formatSize(bytes int64) string {
-	const (
-		KB = 1024
-		MB = KB * 1024
-		GB = MB * 1024
-	)
-
-	switch {
-	case bytes >= GB:
-		return fmt.Sprintf("%.1f GB", float64(bytes)/GB)
-	case bytes >= MB:
-		return fmt.Sprintf("%.0f MB", float64(bytes)/MB)
-	case bytes >= KB:
-		return fmt.Sprintf("%.0f KB", float64(bytes)/KB)
-	default:
-		return fmt.Sprintf("%d B", bytes)
-	}
 }

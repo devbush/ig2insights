@@ -76,6 +76,36 @@ func (m ReelSelectorModel) totalItems() int {
 	return len(m.reels) + m.menuItemCount()
 }
 
+// getMenuAction returns the action for the given menu index
+func (m ReelSelectorModel) getMenuAction(menuIdx int) ReelSelectorAction {
+	actions := []ReelSelectorAction{}
+	if m.hasMore {
+		actions = append(actions, ActionLoadMore)
+	}
+	actions = append(actions, ActionChangeSort, ActionContinue)
+
+	if menuIdx >= 0 && menuIdx < len(actions) {
+		return actions[menuIdx]
+	}
+	return ActionNone
+}
+
+// buildMenuItems returns the menu item labels for display
+func (m ReelSelectorModel) buildMenuItems() []string {
+	items := []string{}
+	if m.hasMore {
+		items = append(items, "Load more")
+	}
+
+	sortLabel := "Latest"
+	if m.currentSort == domain.SortMostViewed {
+		sortLabel = "Top"
+	}
+	items = append(items, fmt.Sprintf("Change sort (%s)", sortLabel))
+	items = append(items, fmt.Sprintf("Continue with %d selected", len(m.SelectedIDs())))
+	return items
+}
+
 func (m ReelSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
@@ -96,31 +126,12 @@ func (m ReelSelectorModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			if m.cursor >= m.menuStart {
-				// Menu item selected
-				menuIdx := m.cursor - m.menuStart
-				if m.hasMore {
-					switch menuIdx {
-					case 0:
-						m.action = ActionLoadMore
-					case 1:
-						m.action = ActionChangeSort
-					case 2:
-						m.action = ActionContinue
-					}
-				} else {
-					switch menuIdx {
-					case 0:
-						m.action = ActionChangeSort
-					case 1:
-						m.action = ActionContinue
-					}
-				}
+				m.action = m.getMenuAction(m.cursor - m.menuStart)
 				return m, tea.Quit
-			} else {
-				// Reel item - toggle selection
-				id := m.reels[m.cursor].ID
-				m.selected[id] = !m.selected[id]
 			}
+			// Reel item - toggle selection
+			id := m.reels[m.cursor].ID
+			m.selected[id] = !m.selected[id]
 		case "a":
 			// Select all visible
 			for _, reel := range m.reels {
@@ -162,40 +173,17 @@ func (m ReelSelectorModel) View() string {
 		sb.WriteString("\n")
 	}
 
-	// Separator
+	// Separator and menu items
 	sb.WriteString("────────────────────────────────────────────────────────────────\n")
 
-	// Menu items
-	menuIdx := 0
-
-	if m.hasMore {
+	menuItems := m.buildMenuItems()
+	for i, item := range menuItems {
 		cursor := "  "
-		if m.cursor == m.menuStart+menuIdx {
+		if m.cursor == m.menuStart+i {
 			cursor = "> "
 		}
-		sb.WriteString(fmt.Sprintf("%s[Load more]\n", cursor))
-		menuIdx++
+		sb.WriteString(fmt.Sprintf("%s[%s]\n", cursor, item))
 	}
-
-	// Change sort
-	cursor := "  "
-	if m.cursor == m.menuStart+menuIdx {
-		cursor = "> "
-	}
-	sortLabel := "Latest"
-	if m.currentSort == domain.SortMostViewed {
-		sortLabel = "Top"
-	}
-	sb.WriteString(fmt.Sprintf("%s[Change sort (%s)]\n", cursor, sortLabel))
-	menuIdx++
-
-	// Continue
-	cursor = "  "
-	if m.cursor == m.menuStart+menuIdx {
-		cursor = "> "
-	}
-	selectedCount := len(m.SelectedIDs())
-	sb.WriteString(fmt.Sprintf("%s[Continue with %d selected]\n", cursor, selectedCount))
 
 	sb.WriteString("\n(space=toggle, a=all, n=none, enter=select, q=cancel)\n")
 

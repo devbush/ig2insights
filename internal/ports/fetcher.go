@@ -6,11 +6,11 @@ import (
 	"github.com/devbush/ig2insights/internal/domain"
 )
 
-// AccountFetcher retrieves Instagram account information
+// AccountFetcher retrieves Instagram account information.
 type AccountFetcher interface {
-	// GetAccount fetches account info including reel count
+	// GetAccount fetches account info including reel count.
 	GetAccount(ctx context.Context, username string) (*domain.Account, error)
 
-	// ListReels fetches reels from an account
+	// ListReels fetches reels from an account with the specified sort order and limit.
 	ListReels(ctx context.Context, username string, sort domain.SortOrder, limit int) ([]*domain.Reel, error)
 }

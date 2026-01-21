@@ -21,13 +21,13 @@ import (
 	"github.com/devbush/ig2insights/internal/ports"
 )
 
-// Model sizes in bytes (approximate)
-var modelSizes = map[string]int64{
-	"tiny":   75 * 1024 * 1024,
-	"base":   140 * 1024 * 1024,
-	"small":  462 * 1024 * 1024,
-	"medium": 1500 * 1024 * 1024,
-	"large":  3000 * 1024 * 1024,
+// availableModels defines all supported Whisper models with their metadata
+var availableModels = []ports.Model{
+	{Name: "tiny", Size: 75 * 1024 * 1024, Description: "~75MB, basic accuracy, very fast"},
+	{Name: "base", Size: 140 * 1024 * 1024, Description: "~140MB, good accuracy, fast"},
+	{Name: "small", Size: 462 * 1024 * 1024, Description: "~462MB, better accuracy, moderate speed"},
+	{Name: "medium", Size: 1500 * 1024 * 1024, Description: "~1.5GB, great accuracy, slower"},
+	{Name: "large", Size: 3000 * 1024 * 1024, Description: "~3GB, best accuracy, slow"},
 }
 
 // Transcriber implements ports.Transcriber using whisper.cpp
@@ -59,14 +59,82 @@ func (t *Transcriber) modelPath(name string) string {
 	return filepath.Join(t.modelsDir, fmt.Sprintf("ggml-%s.bin", name))
 }
 
-func (t *Transcriber) AvailableModels() []ports.Model {
-	models := []ports.Model{
-		{Name: "tiny", Size: modelSizes["tiny"], Description: "~75MB, basic accuracy, very fast"},
-		{Name: "base", Size: modelSizes["base"], Description: "~140MB, good accuracy, fast"},
-		{Name: "small", Size: modelSizes["small"], Description: "~462MB, better accuracy, moderate speed"},
-		{Name: "medium", Size: modelSizes["medium"], Description: "~1.5GB, great accuracy, slower"},
-		{Name: "large", Size: modelSizes["large"], Description: "~3GB, best accuracy, slow"},
+func isValidModel(name string) bool {
+	for _, m := range availableModels {
+		if m.Name == name {
+			return true
+		}
 	}
+	return false
+}
+
+// downloadWithProgress downloads from a URL to destPath with progress reporting and context cancellation.
+// Partial downloads are cleaned up on failure.
+func downloadWithProgress(ctx context.Context, url, destPath string, progress func(downloaded, total int64)) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to download: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("failed to download: HTTP %d", resp.StatusCode)
+	}
+
+	out, err := os.Create(destPath)
+	if err != nil {
+		return err
+	}
+
+	downloadComplete := false
+	defer func() {
+		out.Close()
+		if !downloadComplete {
+			os.Remove(destPath)
+		}
+	}()
+
+	total := resp.ContentLength
+	var downloaded int64
+	buf := make([]byte, 32*1024)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		n, readErr := resp.Body.Read(buf)
+		if n > 0 {
+			if _, writeErr := out.Write(buf[:n]); writeErr != nil {
+				return writeErr
+			}
+			downloaded += int64(n)
+			if progress != nil {
+				progress(downloaded, total)
+			}
+		}
+		if readErr == io.EOF {
+			break
+		}
+		if readErr != nil {
+			return readErr
+		}
+	}
+
+	downloadComplete = true
+	return nil
+}
+
+func (t *Transcriber) AvailableModels() []ports.Model {
+	models := make([]ports.Model, len(availableModels))
+	copy(models, availableModels)
 
 	for i := range models {
 		models[i].Downloaded = t.IsModelDownloaded(models[i].Name)
@@ -81,7 +149,7 @@ func (t *Transcriber) IsModelDownloaded(model string) bool {
 }
 
 func (t *Transcriber) DownloadModel(ctx context.Context, model string, progress func(downloaded, total int64)) error {
-	if _, ok := modelSizes[model]; !ok {
+	if !isValidModel(model) {
 		return fmt.Errorf("unknown model: %s", model)
 	}
 
@@ -89,77 +157,18 @@ func (t *Transcriber) DownloadModel(ctx context.Context, model string, progress 
 		return err
 	}
 
-	url := modelURL(model)
 	destPath := t.modelPath(model)
 	tempPath := destPath + ".tmp"
 
-	// Use context-aware HTTP request
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
+	if err := downloadWithProgress(ctx, modelURL(model), tempPath, progress); err != nil {
 		return fmt.Errorf("failed to download model: %w", err)
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to download model: HTTP %d", resp.StatusCode)
-	}
-
-	out, err := os.Create(tempPath)
-	if err != nil {
-		return err
-	}
-
-	// Track success to clean up partial downloads on failure
-	success := false
-	defer func() {
-		out.Close()
-		if !success {
-			os.Remove(tempPath)
-		}
-	}()
-
-	total := resp.ContentLength
-	var downloaded int64
-
-	buf := make([]byte, 32*1024)
-	for {
-		// Check for context cancellation
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			_, writeErr := out.Write(buf[:n])
-			if writeErr != nil {
-				return writeErr
-			}
-			downloaded += int64(n)
-			if progress != nil {
-				progress(downloaded, total)
-			}
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-	}
-
-	out.Close()
 	if err := os.Rename(tempPath, destPath); err != nil {
+		os.Remove(tempPath)
 		return err
 	}
 
-	success = true
 	return nil
 }
 
@@ -189,13 +198,11 @@ func (t *Transcriber) Transcribe(ctx context.Context, videoPath string, opts por
 		return nil, domain.ErrModelNotFound
 	}
 
-	// Find whisper binary
 	whisperBin := t.GetBinaryPath()
 	if whisperBin == "" {
 		return nil, fmt.Errorf("whisper binary not found (install whisper.cpp)")
 	}
 
-	// Create temp file for output
 	tmpDir := os.TempDir()
 	outputBase := filepath.Join(tmpDir, fmt.Sprintf("ig2insights_%d", time.Now().UnixNano()))
 
@@ -218,12 +225,11 @@ func (t *Transcriber) Transcribe(ctx context.Context, videoPath string, opts por
 	if err := cmd.Run(); err != nil {
 		errMsg := stderr.String()
 		if errMsg != "" {
-			return nil, fmt.Errorf("transcription failed: %s", strings.TrimSpace(errMsg))
+			return nil, fmt.Errorf("failed to transcribe: %s", strings.TrimSpace(errMsg))
 		}
-		return nil, fmt.Errorf("transcription failed: %w", err)
+		return nil, fmt.Errorf("failed to transcribe: %w", err)
 	}
 
-	// Read JSON output
 	jsonPath := outputBase + ".json"
 	defer os.Remove(jsonPath)
 
@@ -348,84 +354,29 @@ func (t *Transcriber) Install(ctx context.Context, progress func(downloaded, tot
 		return err
 	}
 
-	// Download zip to temp file
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
-	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("failed to download whisper.cpp: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to download whisper.cpp: HTTP %d", resp.StatusCode)
-	}
-
-	// Download to temp file
-	tmpFile, err := os.CreateTemp("", "whisper-*.zip")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmpFile.Name()
+	tmpPath := filepath.Join(os.TempDir(), "whisper-download.zip")
 	defer os.Remove(tmpPath)
 
-	total := resp.ContentLength
-	var downloaded int64
-
-	buf := make([]byte, 32*1024)
-	for {
-		select {
-		case <-ctx.Done():
-			tmpFile.Close()
-			return ctx.Err()
-		default:
-		}
-
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			_, writeErr := tmpFile.Write(buf[:n])
-			if writeErr != nil {
-				tmpFile.Close()
-				return writeErr
-			}
-			downloaded += int64(n)
-			if progress != nil {
-				progress(downloaded, total)
-			}
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			tmpFile.Close()
-			return err
-		}
+	if err := downloadWithProgress(ctx, downloadURL, tmpPath, progress); err != nil {
+		return fmt.Errorf("failed to download whisper.cpp: %w", err)
 	}
-	tmpFile.Close()
 
-	// Track success to clean up extracted files on failure
-	destPath := filepath.Join(binDir, whisperBinaryName())
-	success := false
-	defer func() {
-		if !success {
-			// Clean up all extracted files
-			os.Remove(destPath)
-			os.Remove(filepath.Join(binDir, "ggml-base.dll"))
-			os.Remove(filepath.Join(binDir, "ggml-cpu.dll"))
-			os.Remove(filepath.Join(binDir, "ggml.dll"))
-			os.Remove(filepath.Join(binDir, "whisper.dll"))
-		}
-	}()
+	extractedFiles := []string{
+		filepath.Join(binDir, whisperBinaryName()),
+		filepath.Join(binDir, "ggml-base.dll"),
+		filepath.Join(binDir, "ggml-cpu.dll"),
+		filepath.Join(binDir, "ggml.dll"),
+		filepath.Join(binDir, "whisper.dll"),
+	}
 
 	if err := t.extractWhisperFromZip(tmpPath, binDir); err != nil {
+		for _, f := range extractedFiles {
+			os.Remove(f)
+		}
 		return err
 	}
 
-	t.binPath = destPath
-	success = true
+	t.binPath = filepath.Join(binDir, whisperBinaryName())
 	return nil
 }
 
@@ -436,9 +387,8 @@ func (t *Transcriber) extractWhisperFromZip(zipPath, binDir string) error {
 	}
 	defer r.Close()
 
-	// Files to extract: whisper-cli.exe and required DLLs
 	filesToExtract := map[string]string{
-		"whisper-cli.exe": whisperBinaryName(), // Rename to whisper.exe
+		"whisper-cli.exe": whisperBinaryName(),
 		"ggml-base.dll":   "ggml-base.dll",
 		"ggml-cpu.dll":    "ggml-cpu.dll",
 		"ggml.dll":        "ggml.dll",
@@ -461,7 +411,6 @@ func (t *Transcriber) extractWhisperFromZip(zipPath, binDir string) error {
 		extracted[name] = true
 	}
 
-	// Verify whisper-cli.exe was extracted
 	if !extracted["whisper-cli.exe"] {
 		return fmt.Errorf("whisper-cli.exe not found in whisper.cpp zip")
 	}
@@ -487,7 +436,6 @@ func extractFile(f *zip.File, destPath string) error {
 		return err
 	}
 
-	// Make executable on Unix
 	if runtime.GOOS != "windows" {
 		if err := os.Chmod(destPath, 0755); err != nil {
 			return err

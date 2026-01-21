@@ -218,7 +218,16 @@ func runTranscribeInteractive() error {
 	return runDownloadOnly(input, wantAudio, wantVideo, wantThumbnail)
 }
 
-func runDownloadOnly(input string, audio, video, thumbnail bool) error {
+// assetDownloadConfig holds configuration for downloading a single asset type
+type assetDownloadConfig struct {
+	enabled     bool
+	cachedPath  string
+	destPath    string
+	assetType   string
+	downloadFn  func() (string, error)
+}
+
+func runDownloadOnly(input string, wantAudio, wantVideo, wantThumbnail bool) error {
 	app, err := GetApp()
 	if err != nil {
 		return fmt.Errorf("failed to initialize: %w", err)
@@ -230,165 +239,207 @@ func runDownloadOnly(input string, audio, video, thumbnail bool) error {
 	}
 
 	ctx := context.Background()
-	outputDir := dirFlag
-	if outputDir == "" {
-		outputDir = reel.ID // Default to ./{reelID}/
-	}
-	baseName := nameFlag
-	if baseName == "" {
-		baseName = reel.ID // Default to {reelID}
-	}
+	outputDir, baseName := resolveOutputPaths(reel.ID)
 
-	// Create output directory
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
 
-	// Check cache for existing assets
 	cached, _ := app.Cache.Get(ctx, reel.ID)
-	hasAudio := cached != nil && cached.AudioPath != "" && fileExists(cached.AudioPath)
-	hasVideo := cached != nil && cached.VideoPath != "" && fileExists(cached.VideoPath)
-	hasThumbnail := cached != nil && cached.ThumbnailPath != "" && fileExists(cached.ThumbnailPath)
-
 	cacheDir := app.Cache.GetCacheDir(reel.ID)
+
+	// Build asset download configurations
+	assets := []assetDownloadConfig{
+		{
+			enabled:    wantAudio,
+			cachedPath: getCachedPath(cached, "audio"),
+			destPath:   filepath.Join(outputDir, baseName+".wav"),
+			assetType:  "audio",
+			downloadFn: func() (string, error) {
+				if err := os.MkdirAll(cacheDir, 0755); err != nil {
+					return "", err
+				}
+				result, err := app.Downloader.DownloadAudio(ctx, reel.ID, cacheDir)
+				if err != nil {
+					return "", err
+				}
+				return result.AudioPath, nil
+			},
+		},
+		{
+			enabled:    wantVideo,
+			cachedPath: getCachedPath(cached, "video"),
+			destPath:   filepath.Join(outputDir, baseName+".mp4"),
+			assetType:  "video",
+			downloadFn: func() (string, error) {
+				cachePath := filepath.Join(cacheDir, "video.mp4")
+				if err := os.MkdirAll(cacheDir, 0755); err != nil {
+					return "", err
+				}
+				if err := app.Downloader.DownloadVideo(ctx, reel.ID, cachePath); err != nil {
+					return "", err
+				}
+				return cachePath, nil
+			},
+		},
+		{
+			enabled:    wantThumbnail,
+			cachedPath: getCachedPath(cached, "thumbnail"),
+			destPath:   filepath.Join(outputDir, baseName+".jpg"),
+			assetType:  "thumbnail",
+			downloadFn: func() (string, error) {
+				cachePath := filepath.Join(cacheDir, "thumbnail.jpg")
+				if err := os.MkdirAll(cacheDir, 0755); err != nil {
+					return "", err
+				}
+				if err := app.Downloader.DownloadThumbnail(ctx, reel.ID, cachePath); err != nil {
+					return "", err
+				}
+				return cachePath, nil
+			},
+		},
+	}
+
+	// Process each asset and collect new cache paths
 	cacheUpdated := false
-	var cachedAudioPath, cachedVideoPath, cachedThumbnailPath string
+	newCachePaths := make(map[string]string)
 
-	if audio {
-		destPath := filepath.Join(outputDir, baseName+".wav")
-		if hasAudio {
-			if !quietFlag {
-				fmt.Printf("Copying audio from cache to %s...\n", destPath)
-			}
-			if err := copyFile(cached.AudioPath, destPath); err != nil {
-				return fmt.Errorf("failed to copy audio: %w", err)
-			}
-			cachedAudioPath = cached.AudioPath
-		} else {
-			if !quietFlag {
-				fmt.Printf("Downloading audio to %s...\n", destPath)
-			}
-			// Download to cache directory, then copy to output
-			if err := os.MkdirAll(cacheDir, 0755); err != nil {
-				return fmt.Errorf("failed to create cache dir: %w", err)
-			}
-			downloadResult, err := app.Downloader.DownloadAudio(ctx, reel.ID, cacheDir)
-			if err != nil {
-				return fmt.Errorf("audio download failed: %w", err)
-			}
-			if err := copyFile(downloadResult.AudioPath, destPath); err != nil {
-				return fmt.Errorf("failed to copy audio: %w", err)
-			}
-			cachedAudioPath = downloadResult.AudioPath
-			cacheUpdated = true
+	for _, asset := range assets {
+		if !asset.enabled {
+			continue
 		}
-		if !quietFlag {
-			fmt.Println("Audio downloaded")
+
+		cachePath, wasDownloaded, err := downloadAsset(asset)
+		if err != nil {
+			return err
+		}
+
+		newCachePaths[asset.assetType] = cachePath
+		if wasDownloaded {
+			cacheUpdated = true
 		}
 	}
 
-	if video {
-		destPath := filepath.Join(outputDir, baseName+".mp4")
-		if hasVideo {
-			if !quietFlag {
-				fmt.Printf("Copying video from cache to %s...\n", destPath)
-			}
-			if err := copyFile(cached.VideoPath, destPath); err != nil {
-				return fmt.Errorf("failed to copy video: %w", err)
-			}
-			cachedVideoPath = cached.VideoPath
-		} else {
-			if !quietFlag {
-				fmt.Printf("Downloading video to %s...\n", destPath)
-			}
-			// Download to cache first, then copy to output
-			cachePath := filepath.Join(cacheDir, "video.mp4")
-			if err := os.MkdirAll(cacheDir, 0755); err != nil {
-				return fmt.Errorf("failed to create cache dir: %w", err)
-			}
-			if err := app.Downloader.DownloadVideo(ctx, reel.ID, cachePath); err != nil {
-				return fmt.Errorf("video download failed: %w", err)
-			}
-			if err := copyFile(cachePath, destPath); err != nil {
-				return fmt.Errorf("failed to copy video: %w", err)
-			}
-			cachedVideoPath = cachePath
-			cacheUpdated = true
-		}
-		if !quietFlag {
-			fmt.Println("Video downloaded")
-		}
-	}
-
-	if thumbnail {
-		destPath := filepath.Join(outputDir, baseName+".jpg")
-		if hasThumbnail {
-			if !quietFlag {
-				fmt.Printf("Copying thumbnail from cache to %s...\n", destPath)
-			}
-			if err := copyFile(cached.ThumbnailPath, destPath); err != nil {
-				return fmt.Errorf("failed to copy thumbnail: %w", err)
-			}
-			cachedThumbnailPath = cached.ThumbnailPath
-		} else {
-			if !quietFlag {
-				fmt.Printf("Downloading thumbnail to %s...\n", destPath)
-			}
-			// Download to cache first, then copy to output
-			cachePath := filepath.Join(cacheDir, "thumbnail.jpg")
-			if err := os.MkdirAll(cacheDir, 0755); err != nil {
-				return fmt.Errorf("failed to create cache dir: %w", err)
-			}
-			if err := app.Downloader.DownloadThumbnail(ctx, reel.ID, cachePath); err != nil {
-				return fmt.Errorf("thumbnail download failed: %w", err)
-			}
-			if err := copyFile(cachePath, destPath); err != nil {
-				return fmt.Errorf("failed to copy thumbnail: %w", err)
-			}
-			cachedThumbnailPath = cachePath
-			cacheUpdated = true
-		}
-		if !quietFlag {
-			fmt.Println("Thumbnail downloaded")
-		}
-	}
-
-	// Update cache if we downloaded new assets
 	if cacheUpdated {
-		now := time.Now()
-		ttl, _ := time.ParseDuration(cacheTTLFlag)
-		if ttl == 0 {
-			ttl = 7 * 24 * time.Hour
-		}
-
-		cacheItem := &ports.CachedItem{
-			AudioPath:     cachedAudioPath,
-			VideoPath:     cachedVideoPath,
-			ThumbnailPath: cachedThumbnailPath,
-			CreatedAt:     now,
-			ExpiresAt:     now.Add(ttl),
-		}
-
-		// Preserve existing cache data
-		if cached != nil {
-			cacheItem.Reel = cached.Reel
-			cacheItem.Transcript = cached.Transcript
-			if cacheItem.AudioPath == "" {
-				cacheItem.AudioPath = cached.AudioPath
-			}
-			if cacheItem.VideoPath == "" {
-				cacheItem.VideoPath = cached.VideoPath
-			}
-			if cacheItem.ThumbnailPath == "" {
-				cacheItem.ThumbnailPath = cached.ThumbnailPath
-			}
-			cacheItem.CreatedAt = cached.CreatedAt
-		}
-
-		_ = app.Cache.Set(ctx, reel.ID, cacheItem)
+		updateAssetCache(ctx, app, reel.ID, cached, newCachePaths)
 	}
 
 	return nil
+}
+
+// getCachedPath returns the cached path for an asset if it exists
+func getCachedPath(cached *ports.CachedItem, assetType string) string {
+	if cached == nil {
+		return ""
+	}
+	var path string
+	switch assetType {
+	case "audio":
+		path = cached.AudioPath
+	case "video":
+		path = cached.VideoPath
+	case "thumbnail":
+		path = cached.ThumbnailPath
+	}
+	if path != "" && fileExists(path) {
+		return path
+	}
+	return ""
+}
+
+// downloadAsset handles downloading or copying a single asset.
+// Returns the cache path, whether a download occurred, and any error.
+func downloadAsset(cfg assetDownloadConfig) (cachePath string, wasDownloaded bool, err error) {
+	if cfg.cachedPath != "" {
+		if !quietFlag {
+			fmt.Printf("Copying %s from cache to %s...\n", cfg.assetType, cfg.destPath)
+		}
+		if err := copyFile(cfg.cachedPath, cfg.destPath); err != nil {
+			return "", false, fmt.Errorf("failed to copy %s: %w", cfg.assetType, err)
+		}
+		if !quietFlag {
+			fmt.Printf("%s copied\n", capitalizeFirst(cfg.assetType))
+		}
+		return cfg.cachedPath, false, nil
+	}
+
+	if !quietFlag {
+		fmt.Printf("Downloading %s to %s...\n", cfg.assetType, cfg.destPath)
+	}
+	downloadedPath, err := cfg.downloadFn()
+	if err != nil {
+		return "", false, fmt.Errorf("%s download failed: %w", cfg.assetType, err)
+	}
+	if err := copyFile(downloadedPath, cfg.destPath); err != nil {
+		return "", false, fmt.Errorf("failed to copy %s: %w", cfg.assetType, err)
+	}
+	if !quietFlag {
+		fmt.Printf("%s downloaded\n", capitalizeFirst(cfg.assetType))
+	}
+	return downloadedPath, true, nil
+}
+
+// capitalizeFirst returns the string with its first letter capitalized
+func capitalizeFirst(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// updateAssetCache updates the cache with newly downloaded asset paths
+func updateAssetCache(ctx context.Context, app *App, reelID string, cached *ports.CachedItem, newPaths map[string]string) {
+	now := time.Now()
+	ttl, _ := time.ParseDuration(cacheTTLFlag)
+	if ttl == 0 {
+		ttl = 7 * 24 * time.Hour
+	}
+
+	cacheItem := &ports.CachedItem{
+		AudioPath:     newPaths["audio"],
+		VideoPath:     newPaths["video"],
+		ThumbnailPath: newPaths["thumbnail"],
+		CreatedAt:     now,
+		ExpiresAt:     now.Add(ttl),
+	}
+
+	if cached != nil {
+		cacheItem.Reel = cached.Reel
+		cacheItem.Transcript = cached.Transcript
+		if cacheItem.AudioPath == "" {
+			cacheItem.AudioPath = cached.AudioPath
+		}
+		if cacheItem.VideoPath == "" {
+			cacheItem.VideoPath = cached.VideoPath
+		}
+		if cacheItem.ThumbnailPath == "" {
+			cacheItem.ThumbnailPath = cached.ThumbnailPath
+		}
+		cacheItem.CreatedAt = cached.CreatedAt
+	}
+
+	_ = app.Cache.Set(ctx, reelID, cacheItem)
+}
+
+// resolveOutputPaths returns the output directory and base filename
+func resolveOutputPaths(reelID string) (outputDir, baseName string) {
+	outputDir = dirFlag
+	if outputDir == "" {
+		outputDir = reelID
+	}
+	baseName = nameFlag
+	if baseName == "" {
+		baseName = reelID
+	}
+	return outputDir, baseName
+}
+
+// stepName returns the step name with "(cached)" suffix if cached
+func stepName(name string, cached bool) string {
+	if cached {
+		return name + " (cached)"
+	}
+	return name
 }
 
 func runAccountInteractive(username string) error {
@@ -608,19 +659,10 @@ func runTranscribe(input string) error {
 	hasThumbnail := cached != nil && cached.ThumbnailPath != "" && fileExists(cached.ThumbnailPath)
 
 	// Build step list based on what we're doing and what's cached
-	steps := []string{}
-
-	steps = append(steps, "Checking dependencies")
-
-	if hasTranscript {
-		steps = append(steps, "Downloading video (cached)")
-		steps = append(steps, "Extracting audio (cached)")
-		steps = append(steps, "Transcribing (cached)")
-	} else {
-		steps = append(steps, "Downloading video")
-		steps = append(steps, "Extracting audio")
-		steps = append(steps, "Transcribing")
-	}
+	steps := []string{"Checking dependencies"}
+	steps = append(steps, stepName("Downloading video", hasTranscript))
+	steps = append(steps, stepName("Extracting audio", hasTranscript))
+	steps = append(steps, stepName("Transcribing", hasTranscript))
 
 	audioStepIdx := -1
 	videoStepIdx := -1
@@ -628,27 +670,15 @@ func runTranscribe(input string) error {
 
 	if audioFlag {
 		audioStepIdx = len(steps)
-		if hasAudio {
-			steps = append(steps, "Saving audio (cached)")
-		} else {
-			steps = append(steps, "Saving audio")
-		}
+		steps = append(steps, stepName("Saving audio", hasAudio))
 	}
 	if videoFlag {
 		videoStepIdx = len(steps)
-		if hasVideo {
-			steps = append(steps, "Saving video (cached)")
-		} else {
-			steps = append(steps, "Saving video")
-		}
+		steps = append(steps, stepName("Saving video", hasVideo))
 	}
 	if thumbnailFlag {
 		thumbStepIdx = len(steps)
-		if hasThumbnail {
-			steps = append(steps, "Downloading thumbnail (cached)")
-		} else {
-			steps = append(steps, "Downloading thumbnail")
-		}
+		steps = append(steps, stepName("Downloading thumbnail", hasThumbnail))
 	}
 
 	progress := tui.NewProgressDisplay(steps, quietFlag)
@@ -742,17 +772,7 @@ func runTranscribe(input string) error {
 		progress.CompleteStep(3) // Transcribe
 	}
 
-	// Determine output directory and base filename
-	outputDir := dirFlag
-	if outputDir == "" {
-		outputDir = reel.ID // Default to ./{reelID}/
-	}
-	baseName := nameFlag
-	if baseName == "" {
-		baseName = reel.ID // Default to {reelID}
-	}
-
-	// Create output directory
+	outputDir, baseName := resolveOutputPaths(reel.ID)
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		close(spinnerDone)
 		return fmt.Errorf("failed to create output directory: %w", err)

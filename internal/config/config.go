@@ -37,9 +37,6 @@ func DefaultConfig() *Config {
 			Format:   "text",
 			CacheTTL: "7d",
 		},
-		Paths: PathsConfig{
-			YtDlp: "",
-		},
 	}
 }
 
@@ -145,12 +142,8 @@ func ParseDuration(s string) (time.Duration, error) {
 	value, _ := strconv.Atoi(matches[1])
 	unit := matches[2]
 
-	switch unit {
-	case "h":
-		return time.Duration(value) * time.Hour, nil
-	case "d":
+	if unit == "d" {
 		return time.Duration(value) * 24 * time.Hour, nil
-	default:
-		return 0, fmt.Errorf("unknown duration unit: %s", unit)
 	}
+	return time.Duration(value) * time.Hour, nil
 }

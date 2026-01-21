@@ -3,6 +3,7 @@ package ytdlp
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,6 +21,13 @@ import (
 	"github.com/devbush/ig2insights/internal/ports"
 )
 
+const (
+	instagramReelURLFormat = "https://www.instagram.com/p/%s/"
+	instagramReelsURLFormat = "https://www.instagram.com/%s/reels/"
+	ytdlpDownloadBase      = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/"
+	ffmpegWindowsURL       = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.7z"
+)
+
 // Downloader implements VideoDownloader and AccountFetcher using yt-dlp
 type Downloader struct {
 	binPath    string
@@ -31,29 +39,57 @@ func NewDownloader() *Downloader {
 	return &Downloader{}
 }
 
-func binaryName() string {
+// executableName appends .exe suffix on Windows
+func executableName(name string) string {
 	if runtime.GOOS == "windows" {
-		return "yt-dlp.exe"
+		return name + ".exe"
 	}
-	return "yt-dlp"
+	return name
+}
+
+func binaryName() string {
+	return executableName("yt-dlp")
 }
 
 func ffmpegBinaryName() string {
-	if runtime.GOOS == "windows" {
-		return "ffmpeg.exe"
-	}
-	return "ffmpeg"
+	return executableName("ffmpeg")
 }
 
 func ffprobeBinaryName() string {
-	if runtime.GOOS == "windows" {
-		return "ffprobe.exe"
-	}
-	return "ffprobe"
+	return executableName("ffprobe")
 }
 
 func buildReelURL(reelID string) string {
-	return fmt.Sprintf("https://www.instagram.com/p/%s/", reelID)
+	return fmt.Sprintf(instagramReelURLFormat, reelID)
+}
+
+func buildReelsURL(username string) string {
+	return fmt.Sprintf(instagramReelsURLFormat, username)
+}
+
+// detectYtdlpError converts yt-dlp stderr messages to domain errors
+func detectYtdlpError(err error) error {
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return nil
+	}
+
+	stderr := string(exitErr.Stderr)
+
+	if strings.Contains(stderr, "Private video") || strings.Contains(stderr, "Video unavailable") {
+		return domain.ErrReelNotFound
+	}
+	if strings.Contains(stderr, "not found") || strings.Contains(stderr, "404") {
+		return domain.ErrAccountNotFound
+	}
+	if strings.Contains(stderr, "rate") || strings.Contains(stderr, "429") {
+		return domain.ErrRateLimited
+	}
+	if strings.Contains(stderr, "Unable to extract data") || strings.Contains(stderr, "Unsupported URL") {
+		return domain.ErrInstagramScrapingBlocked
+	}
+
+	return nil
 }
 
 func (d *Downloader) findBinary() string {
@@ -112,7 +148,7 @@ func (d *Downloader) IsFFmpegAvailable() bool {
 
 func (d *Downloader) getFFmpegDownloadURL() string {
 	if runtime.GOOS == "windows" {
-		return "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.7z"
+		return ffmpegWindowsURL
 	}
 	return ""
 }
@@ -131,7 +167,7 @@ func (d *Downloader) FFmpegInstructions() string {
 func (d *Downloader) DownloadAudio(ctx context.Context, reelID string, destDir string) (*ports.DownloadResult, error) {
 	binPath := d.GetBinaryPath()
 	if binPath == "" {
-		return nil, fmt.Errorf("yt-dlp not found")
+		return nil, fmt.Errorf("yt-dlp not found; run 'ig2insights deps install'")
 	}
 
 	// Check for ffmpeg (needed for audio extraction)
@@ -159,17 +195,14 @@ func (d *Downloader) DownloadAudio(ctx context.Context, reelID string, destDir s
 	cmd := exec.CommandContext(ctx, binPath, args...)
 	output, err := cmd.Output()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			stderr := string(exitErr.Stderr)
-			if strings.Contains(stderr, "Private video") || strings.Contains(stderr, "Video unavailable") {
-				return nil, domain.ErrReelNotFound
-			}
-			if strings.Contains(stderr, "rate") || strings.Contains(stderr, "429") {
-				return nil, domain.ErrRateLimited
-			}
-			return nil, fmt.Errorf("yt-dlp failed: %s", stderr)
+		if domainErr := detectYtdlpError(err); domainErr != nil {
+			return nil, domainErr
 		}
-		return nil, fmt.Errorf("yt-dlp failed: %w", err)
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return nil, fmt.Errorf("failed to run yt-dlp: %s", exitErr.Stderr)
+		}
+		return nil, fmt.Errorf("failed to run yt-dlp: %w", err)
 	}
 
 	// Parse JSON output for metadata
@@ -235,14 +268,13 @@ func (d *Downloader) Install(ctx context.Context, progress func(downloaded, tota
 		return err
 	}
 
-	downloadURL := d.getDownloadURL()
 	destPath := filepath.Join(binDir, binaryName())
 
-	// Use context-aware HTTP request
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, d.getDownloadURL(), nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
+
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to download yt-dlp: %w", err)
@@ -258,7 +290,6 @@ func (d *Downloader) Install(ctx context.Context, progress func(downloaded, tota
 		return err
 	}
 
-	// Track success to clean up partial downloads on failure
 	success := false
 	defer func() {
 		out.Close()
@@ -267,38 +298,10 @@ func (d *Downloader) Install(ctx context.Context, progress func(downloaded, tota
 		}
 	}()
 
-	total := resp.ContentLength
-	var downloaded int64
-
-	buf := make([]byte, 32*1024)
-	for {
-		// Check for context cancellation
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-		}
-
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			_, writeErr := out.Write(buf[:n])
-			if writeErr != nil {
-				return writeErr
-			}
-			downloaded += int64(n)
-			if progress != nil {
-				progress(downloaded, total)
-			}
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
+	if err := downloadWithProgress(ctx, resp.Body, out, resp.ContentLength, progress); err != nil {
+		return err
 	}
 
-	// Make executable on Unix
 	if runtime.GOOS != "windows" {
 		if err := os.Chmod(destPath, 0755); err != nil {
 			return err
@@ -311,22 +314,20 @@ func (d *Downloader) Install(ctx context.Context, progress func(downloaded, tota
 }
 
 func (d *Downloader) getDownloadURL() string {
-	base := "https://github.com/yt-dlp/yt-dlp/releases/latest/download/"
-
 	switch runtime.GOOS {
 	case "windows":
-		return base + "yt-dlp.exe"
+		return ytdlpDownloadBase + "yt-dlp.exe"
 	case "darwin":
-		return base + "yt-dlp_macos"
+		return ytdlpDownloadBase + "yt-dlp_macos"
 	default:
-		return base + "yt-dlp"
+		return ytdlpDownloadBase + "yt-dlp"
 	}
 }
 
 func (d *Downloader) Update(ctx context.Context) error {
 	binPath := d.GetBinaryPath()
 	if binPath == "" {
-		return fmt.Errorf("yt-dlp not installed")
+		return fmt.Errorf("yt-dlp not installed; run 'ig2insights deps install'")
 	}
 
 	cmd := exec.CommandContext(ctx, binPath, "-U")
@@ -336,12 +337,10 @@ func (d *Downloader) Update(ctx context.Context) error {
 func (d *Downloader) GetAccount(ctx context.Context, username string) (*domain.Account, error) {
 	binPath := d.GetBinaryPath()
 	if binPath == "" {
-		return nil, fmt.Errorf("yt-dlp not found")
+		return nil, fmt.Errorf("yt-dlp not found; run 'ig2insights deps install'")
 	}
 
-	// Use playlist extraction to get account info
-	url := fmt.Sprintf("https://www.instagram.com/%s/reels/", username)
-
+	url := buildReelsURL(username)
 	args := []string{
 		"--no-warnings",
 		"--flat-playlist",
@@ -353,21 +352,17 @@ func (d *Downloader) GetAccount(ctx context.Context, username string) (*domain.A
 	cmd := exec.CommandContext(ctx, binPath, args...)
 	output, err := cmd.Output()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			stderr := string(exitErr.Stderr)
-			if strings.Contains(stderr, "not found") || strings.Contains(stderr, "404") {
-				return nil, domain.ErrAccountNotFound
-			}
+		if domainErr := detectYtdlpError(err); domainErr != nil {
+			return nil, domainErr
 		}
 		return nil, fmt.Errorf("failed to fetch account: %w", err)
 	}
 
-	// Count entries to estimate reel count
-	// Note: ReelCount will be 0 or 1 due to the -I 1:1 flag limiting to first item.
-	// This is a limitation - we only fetch one item to quickly verify the account exists.
-	// A full reel count would require fetching the entire playlist which is slow.
+	// Count entries to estimate reel count.
+	// ReelCount will be 0 or 1 due to -I 1:1 limiting to the first item.
+	// A full count would require fetching the entire playlist which is slow.
 	trimmed := strings.TrimSpace(string(output))
-	var reelCount int
+	reelCount := 0
 	if trimmed != "" {
 		reelCount = len(strings.Split(trimmed, "\n"))
 	}
@@ -378,14 +373,13 @@ func (d *Downloader) GetAccount(ctx context.Context, username string) (*domain.A
 	}, nil
 }
 
-func (d *Downloader) ListReels(ctx context.Context, username string, sort domain.SortOrder, limit int) ([]*domain.Reel, error) {
+func (d *Downloader) ListReels(ctx context.Context, username string, sortOrder domain.SortOrder, limit int) ([]*domain.Reel, error) {
 	binPath := d.GetBinaryPath()
 	if binPath == "" {
-		return nil, fmt.Errorf("yt-dlp not found")
+		return nil, fmt.Errorf("yt-dlp not found; run 'ig2insights deps install'")
 	}
 
-	url := fmt.Sprintf("https://www.instagram.com/%s/reels/", username)
-
+	url := buildReelsURL(username)
 	args := []string{
 		"--no-warnings",
 		"--flat-playlist",
@@ -394,60 +388,49 @@ func (d *Downloader) ListReels(ctx context.Context, username string, sort domain
 		url,
 	}
 
-	// Note: yt-dlp returns chronological order by default
-	// For "most viewed", we'd need to fetch all and sort client-side
-	// This is a limitation - Instagram doesn't expose a "top" endpoint easily
-
 	cmd := exec.CommandContext(ctx, binPath, args...)
 	output, err := cmd.Output()
 	if err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			stderr := string(exitErr.Stderr)
-			if strings.Contains(stderr, "not found") || strings.Contains(stderr, "404") {
-				return nil, domain.ErrAccountNotFound
-			}
-			if strings.Contains(stderr, "rate") || strings.Contains(stderr, "429") {
-				return nil, domain.ErrRateLimited
-			}
-			if strings.Contains(stderr, "Unable to extract data") || strings.Contains(stderr, "Unsupported URL") {
-				return nil, domain.ErrInstagramScrapingBlocked
-			}
+		if domainErr := detectYtdlpError(err); domainErr != nil {
+			return nil, domainErr
 		}
 		return nil, fmt.Errorf("failed to list reels: %w", err)
 	}
 
-	var reels []*domain.Reel
+	reels := parseReelsFromOutput(output)
+
+	if sortOrder == domain.SortMostViewed {
+		sortByViews(reels)
+	}
+
+	return reels, nil
+}
+
+// reelInfo represents the JSON structure returned by yt-dlp for a reel
+type reelInfo struct {
+	ID           string  `json:"id"`
+	Title        string  `json:"title"`
+	Uploader     string  `json:"uploader"`
+	Duration     float64 `json:"duration"`
+	ViewCount    int64   `json:"view_count"`
+	LikeCount    int64   `json:"like_count"`
+	CommentCount int64   `json:"comment_count"`
+	UploadDate   string  `json:"upload_date"` // YYYYMMDD format
+	Timestamp    int64   `json:"timestamp"`   // Unix timestamp
+}
+
+func parseReelsFromOutput(output []byte) []*domain.Reel {
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	reels := make([]*domain.Reel, 0, len(lines))
 
 	for _, line := range lines {
 		if line == "" {
 			continue
 		}
 
-		var info struct {
-			ID           string  `json:"id"`
-			Title        string  `json:"title"`
-			Uploader     string  `json:"uploader"`
-			Duration     float64 `json:"duration"`
-			ViewCount    int64   `json:"view_count"`
-			LikeCount    int64   `json:"like_count"`
-			CommentCount int64   `json:"comment_count"`
-			UploadDate   string  `json:"upload_date"` // YYYYMMDD format
-			Timestamp    int64   `json:"timestamp"`   // Unix timestamp
-		}
-
+		var info reelInfo
 		if err := json.Unmarshal([]byte(line), &info); err != nil {
 			continue
-		}
-
-		var uploadedAt time.Time
-		if info.Timestamp > 0 {
-			uploadedAt = time.Unix(info.Timestamp, 0)
-		} else if info.UploadDate != "" {
-			// Parse YYYYMMDD format
-			if t, err := time.Parse("20060102", info.UploadDate); err == nil {
-				uploadedAt = t
-			}
 		}
 
 		reels = append(reels, &domain.Reel{
@@ -458,17 +441,56 @@ func (d *Downloader) ListReels(ctx context.Context, username string, sort domain
 			ViewCount:       info.ViewCount,
 			LikeCount:       info.LikeCount,
 			CommentCount:    info.CommentCount,
-			UploadedAt:      uploadedAt,
+			UploadedAt:      parseUploadTime(info.Timestamp, info.UploadDate),
 			FetchedAt:       time.Now(),
 		})
 	}
 
-	// Sort by view count if requested
-	if sort == domain.SortMostViewed {
-		sortByViews(reels)
-	}
+	return reels
+}
 
-	return reels, nil
+func parseUploadTime(timestamp int64, uploadDate string) time.Time {
+	if timestamp > 0 {
+		return time.Unix(timestamp, 0)
+	}
+	if uploadDate != "" {
+		if t, err := time.Parse("20060102", uploadDate); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
+
+// downloadWithProgress downloads a file with context cancellation and progress reporting.
+// Returns the total bytes downloaded. The caller is responsible for closing the writer.
+func downloadWithProgress(ctx context.Context, body io.Reader, w io.Writer, total int64, progress func(downloaded, total int64)) error {
+	buf := make([]byte, 32*1024)
+	var downloaded int64
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+		}
+
+		n, err := body.Read(buf)
+		if n > 0 {
+			if _, writeErr := w.Write(buf[:n]); writeErr != nil {
+				return writeErr
+			}
+			downloaded += int64(n)
+			if progress != nil {
+				progress(downloaded, total)
+			}
+		}
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
 }
 
 func sortByViews(reels []*domain.Reel) {
@@ -488,7 +510,6 @@ func (d *Downloader) InstallFFmpeg(ctx context.Context, progress func(downloaded
 		return err
 	}
 
-	// Download 7z to temp file
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, downloadURL, nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
@@ -504,7 +525,6 @@ func (d *Downloader) InstallFFmpeg(ctx context.Context, progress func(downloaded
 		return fmt.Errorf("failed to download ffmpeg: HTTP %d", resp.StatusCode)
 	}
 
-	// Download to temp file
 	tmpFile, err := os.CreateTemp("", "ffmpeg-*.7z")
 	if err != nil {
 		return err
@@ -512,41 +532,12 @@ func (d *Downloader) InstallFFmpeg(ctx context.Context, progress func(downloaded
 	tmpPath := tmpFile.Name()
 	defer os.Remove(tmpPath)
 
-	total := resp.ContentLength
-	var downloaded int64
-
-	buf := make([]byte, 32*1024)
-	for {
-		select {
-		case <-ctx.Done():
-			tmpFile.Close()
-			return ctx.Err()
-		default:
-		}
-
-		n, err := resp.Body.Read(buf)
-		if n > 0 {
-			_, writeErr := tmpFile.Write(buf[:n])
-			if writeErr != nil {
-				tmpFile.Close()
-				return writeErr
-			}
-			downloaded += int64(n)
-			if progress != nil {
-				progress(downloaded, total)
-			}
-		}
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			tmpFile.Close()
-			return err
-		}
+	if err := downloadWithProgress(ctx, resp.Body, tmpFile, resp.ContentLength, progress); err != nil {
+		tmpFile.Close()
+		return err
 	}
 	tmpFile.Close()
 
-	// Track success to clean up extracted files on failure
 	ffmpegPath := filepath.Join(binDir, ffmpegBinaryName())
 	ffprobePath := filepath.Join(binDir, ffprobeBinaryName())
 	success := false
@@ -650,17 +641,14 @@ func (d *Downloader) DownloadThumbnail(ctx context.Context, reelID string, destP
 
 	cmd := exec.CommandContext(ctx, binPath, args...)
 	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			stderr := string(exitErr.Stderr)
-			if strings.Contains(stderr, "Private video") || strings.Contains(stderr, "Video unavailable") {
-				return domain.ErrReelNotFound
-			}
-			if strings.Contains(stderr, "rate") || strings.Contains(stderr, "429") {
-				return domain.ErrRateLimited
-			}
-			return fmt.Errorf("thumbnail download failed: %s", strings.TrimSpace(stderr))
+		if domainErr := detectYtdlpError(err); domainErr != nil {
+			return domainErr
 		}
-		return fmt.Errorf("thumbnail download failed: %w", err)
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return fmt.Errorf("failed to download thumbnail: %s", strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return fmt.Errorf("failed to download thumbnail: %w", err)
 	}
 
 	// yt-dlp adds extension, verify file exists
@@ -704,17 +692,14 @@ func (d *Downloader) DownloadVideo(ctx context.Context, reelID string, destPath 
 
 	cmd := exec.CommandContext(ctx, binPath, args...)
 	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			stderr := string(exitErr.Stderr)
-			if strings.Contains(stderr, "Private video") || strings.Contains(stderr, "Video unavailable") {
-				return domain.ErrReelNotFound
-			}
-			if strings.Contains(stderr, "rate") || strings.Contains(stderr, "429") {
-				return domain.ErrRateLimited
-			}
-			return fmt.Errorf("video download failed: %s", strings.TrimSpace(stderr))
+		if domainErr := detectYtdlpError(err); domainErr != nil {
+			return domainErr
 		}
-		return fmt.Errorf("video download failed: %w", err)
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			return fmt.Errorf("failed to download video: %s", strings.TrimSpace(string(exitErr.Stderr)))
+		}
+		return fmt.Errorf("failed to download video: %w", err)
 	}
 
 	return nil
